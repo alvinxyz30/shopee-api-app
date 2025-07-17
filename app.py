@@ -21,8 +21,7 @@ def gen_signature(path, timestamp):
 
 def shopee_post(path, payload):
     timestamp = int(time.time())
-    full_path = '/api/v2' + path if not path.startswith('/api/v2') else path
-    sign = gen_signature(full_path, timestamp)
+    sign = gen_signature(path, timestamp)
     payload.update({
         'partner_id': PARTNER_ID,
         'timestamp': timestamp,
@@ -39,12 +38,11 @@ def index():
 @app.route('/login')
 def login():
     timestamp = int(time.time())
-    path = '/api/v2/shop/auth_partner'
-    sign = gen_signature(path, timestamp)
+    path = '/shop/auth_partner'
+    sign = gen_signature('/api/v2' + path, timestamp)
     url = f"{API_BASE_URL}{path}?partner_id={PARTNER_ID}&timestamp={timestamp}&sign={sign}&redirect={REDIRECT_URL}"
+    print(f"[LOGIN URL] Redirecting to: {url}")
     return redirect(url)
-
-
 
 @app.route('/callback')
 def callback():
@@ -52,7 +50,7 @@ def callback():
     shop_id = request.args.get('shop_id')
     timestamp = int(time.time())
     path = '/auth/token/get'
-    sign = gen_signature(path, timestamp)
+    sign = gen_signature('/api/v2' + path, timestamp)
 
     payload = {
         'code': code,
@@ -81,8 +79,6 @@ def callback():
     print(f"[Shopee CALLBACK] Berhasil login. Token: {res['access_token']}")
     return redirect('/')
 
-
-
 @app.route('/get_sales', methods=['POST'])
 def get_sales():
     access_token = session.get('access_token')
@@ -92,13 +88,13 @@ def get_sales():
 
     date_from = request.form['date_from']
     date_to = request.form['date_to']
-    
+
     time_from = int(time.mktime(time.strptime(date_from, "%Y-%m-%d")))
     time_to = int(time.mktime(time.strptime(date_to, "%Y-%m-%d")))
 
     timestamp = int(time.time())
     path = '/order/get_order_list'
-    sign = gen_signature(path, timestamp)
+    sign = gen_signature('/api/v2' + path, timestamp)
 
     payload = {
         "partner_id": PARTNER_ID,
