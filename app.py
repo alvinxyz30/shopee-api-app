@@ -9,14 +9,14 @@ import json
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
 
+# Partner info (sandbox)
 PARTNER_ID = 1175215
 PARTNER_KEY = 'shpk6359494e627473757766626a516a494e79634950757676496c62656f6c4d'
 REDIRECT_URL = 'https://alvinnovedra2.pythonanywhere.com/callback'
 CALLBACK_PATH = '/callback'
 
-CLIENT_ID = 'dfc11909fd05496491c33433d61b7020'
-LOGIN_BASE = 'https://account.sandbox.test-stable.shopee.com/signin/oauth/identifier'
-CALLBACK_REDIRECT_URI = 'https://open.sandbox.test-stable.shopee.com/api/v1/oauth2/callback'
+# OAuth authorize endpoint for Shopee Open Platform
+AUTH_URL = 'https://open.sandbox.test-stable.shopee.com/authorize'
 
 @app.route('/')
 def index():
@@ -36,33 +36,20 @@ def index():
 @app.route('/login')
 def login():
     timestamp = int(time.time())
-    state = json.dumps({
-        "nonce": "some_random_string",
-        "id": PARTNER_ID,
-        "auth_shop": 1,
-        "next_url": "https://partner.test-stable.shopeemobile.com/api/v2/shop/auth_partner?isRedirect=true",
-        "is_auth": 0
-    })
-    base_string = f"{CLIENT_ID}{timestamp}"
+    redirect_uri_encoded = urllib.parse.quote(REDIRECT_URL, safe='')
+
+    base_string = f"{PARTNER_ID}{REDIRECT_URL}{timestamp}"
     sign = hmac.new(PARTNER_KEY.encode(), base_string.encode(), hashlib.sha256).hexdigest()
 
     params = {
-        "client_id": CLIENT_ID,
-        "lang": "en",
-        "login_types": "[1,4,2]",
-        "max_auth_age": "3600",
-        "redirect_uri": CALLBACK_REDIRECT_URI,
-        "region": "SG",
-        "required_passwd": "true",
-        "respond_code": "code",
-        "scope": "profile",
-        "state": state,
+        "partner_id": PARTNER_ID,
+        "redirect": REDIRECT_URL,
         "timestamp": timestamp,
-        "title": "sla_title_open_platform_app_login",
         "sign": sign
     }
-    login_url = f"{LOGIN_BASE}?" + urllib.parse.urlencode(params)
-    return redirect(login_url)
+
+    auth_url = AUTH_URL + "?" + urllib.parse.urlencode(params)
+    return redirect(auth_url)
 
 @app.route(CALLBACK_PATH)
 def callback():
@@ -72,6 +59,7 @@ def callback():
     if not code or not shop_id:
         return "Missing code or shop_id in callback"
 
+    # Exchange code for token
     timestamp = int(time.time())
     path = '/api/v2/auth/token/get'
     base_string = f"{PARTNER_ID}{path}{timestamp}{code}{shop_id}"
