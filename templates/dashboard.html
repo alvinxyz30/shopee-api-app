@@ -79,12 +79,12 @@
                                 <div class="grid grid-cols-2 gap-2">
                                     <div>
                                         <label for="date_from_{{ shop.shop_id }}" class="block text-sm font-medium text-gray-700 mb-1">Dari</label>
-                                        <!-- PERBAIKAN: Menggunakan variabel 'date_from' dari app.py -->
+                                        <!-- Menggunakan variabel 'date_from' dari app.py -->
                                         <input type="date" id="date_from_{{ shop.shop_id }}" name="date_from" class="w-full p-2 border border-gray-300 rounded-md" value="{{ date_from }}">
                                     </div>
                                     <div>
                                         <label for="date_to_{{ shop.shop_id }}" class="block text-sm font-medium text-gray-700 mb-1">Sampai</label>
-                                        <!-- PERBAIKAN: Menggunakan variabel 'date_to' dari app.py -->
+                                        <!-- Menggunakan variabel 'date_to' dari app.py -->
                                         <input type="date" id="date_to_{{ shop.shop_id }}" name="date_to" class="w-full p-2 border border-gray-300 rounded-md" value="{{ date_to }}">
                                     </div>
                                 </div>

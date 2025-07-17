@@ -100,14 +100,14 @@ def dashboard():
     """Menampilkan halaman utama dengan daftar toko dari session."""
     shops = session.get('shops', {})
     
-    # PERBAIKAN: Siapkan tanggal default di sini, bukan di HTML
+    # Siapkan tanggal default di sini, bukan di HTML
     today = datetime.now()
     date_to_default = today.strftime('%Y-%m-%d')
     date_from_default = (today - timedelta(days=7)).strftime('%Y-%m-%d')
 
     # Kirim variabel tanggal ke template
     return render_template(
-        'dashboard.html', 
+        'dashboard.html', # Pastikan nama file ini benar
         shops=shops, 
         date_from=date_from_default, 
         date_to=date_to_default
