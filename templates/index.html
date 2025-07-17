@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Shopee API Integration{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">
+            <i class="fas fa-tachometer-alt"></i> Dashboard Shopee API
+        </h1>
+    </div>
+</div>
+
+{% if shops %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-store"></i> Toko Terdaftar ({{ shops|length }}/10)
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for shop in shops %}
+                    <div class="col-md-6 col-lg-4 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h6 class="card-title">
+                                    <i class="fas fa-shopping-bag"></i> {{ shop.shop_name }}
+                                </h6>
+                                <p class="card-text">
+                                    <small class="text-muted">Shop ID: {{ shop.shop_id }}</small><br>
+                                    <small class="text-muted">Ditambahkan: {{ shop.created_at.strftime('%d/%m/%Y %H:%M') }}</small>
+                                </p>
+                                
+                                <!-- Token Status -->
+                                {% if shop.is_token_valid %}
+                                    <span class="badge bg-success mb-2">
+                                        <i class="fas fa-check-circle"></i> Token Valid
+                                    </span>
+                                {% elif shop.token_expires_soon %}
+                                    <span class="badge bg-warning mb-2">
+                                        <i class="fas fa-exclamation-triangle"></i> Token Akan Expired
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-danger mb-2">
+                                        <i class="fas fa-times-circle"></i> Token Expired
+                                    </span>
+                                {% endif %}
+                                
+                                <div class="mt-3">
+                                    <a href="{{ url_for('shop_detail', shop_id=shop.shop_id) }}" 
+                                       class="btn btn-primary btn-sm">
+                                        <i class="fas fa-eye"></i> Lihat Detail
+                                    </a>
+                                    <button class="btn btn-outline-danger btn-sm" 
+                                            onclick="deleteShop('{{ shop.shop_id }}', '{{ shop.shop_name }}')">
+                                        <i class="fas fa-trash"></i> Hapus
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mt-4">
+    <div class="col-md-3">
+        <div class="card text-white bg-primary">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4>{{ shops|length }}</h4>
+                        <p>Total Toko</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-store fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-success">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4>{{ shops|selectattr('is_token_valid')|list|length }}</h4>
+                        <p>Token Valid</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-check-circle fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-warning">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4>{{ shops|selectattr('token_expires_soon')|list|length }}</h4>
+                        <p>Token Akan Expired</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-exclamation-triangle fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-danger">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4>{{ shops|rejectattr('is_token_valid')|list|length }}</h4>
+                        <p>Token Expired</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-times-circle fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<!-- Empty State -->
+<div class="row">
+    <div class="col-12">
+        <div class="text-center py-5">
+            <i class="fas fa-store fa-5x text-muted mb-4"></i>
+            <h3 class="text-muted">Belum Ada Toko Terdaftar</h3>
+            <p class="text-muted mb-4">Tambahkan toko Shopee pertama Anda untuk mulai mengintegrasikan data.</p>
+            <a href="{{ url_for('add_shop') }}" class="btn btn-primary btn-lg">
+                <i class="fas fa-plus"></i> Tambah Toko Pertama
+            </a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Quick Actions -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-bolt"></i> Quick Actions
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-2">
+                        <a href="{{ url_for('add_shop') }}" class="btn btn-outline-primary w-100">
+                            <i class="fas fa-plus"></i> Tambah Toko Baru
+                        </a>
+                    </div>
+                    {% if shops %}
+                    <div class="col-md-4 mb-2">
+                        <a href="{{ url_for('api_logs', shop_id=shops[0].shop_id) }}" class="btn btn-outline-info w-100">
+                            <i class="fas fa-history"></i> Lihat Log API
+                        </a>
+                    </div>
+                    <div class="col-md-4 mb-2">
+                        <button class="btn btn-outline-success w-100" onclick="refreshAllTokens()">
+                            <i class="fas fa-sync"></i> Refresh Semua Token
+                        </button>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Shop Form (Hidden) -->
+<form id="deleteShopForm" method="POST" style="display: none;">
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function deleteShop(shopId, shopName) {
+    if (confirm(`Apakah Anda yakin ingin menghapus toko "${shopName}"?\n\nTindakan ini akan menghapus toko dan semua data terkait.`)) {
+        var form = document.getElementById('deleteShopForm');
+        form.action = `/delete_shop/${shopId}`;
+        form.submit();
+    }
+}
+
+function refreshAllTokens() {
+    if (confirm('Refresh token untuk semua toko? Proses ini mungkin memakan waktu beberapa menit.')) {
+        // Implementasi refresh token (bisa menggunakan AJAX)
+        alert('Fitur refresh otomatis sedang dikembangkan. Silakan refresh token secara manual dari halaman detail toko.');
+    }
+}
+</script>
+{% endblock %}
