@@ -25,7 +25,7 @@ BASE_URL = "https://partner.shopeemobile.com"
 # ==============================================================================
 app = Flask(__name__)
 # Kunci rahasia ini penting untuk keamanan session. Ganti dengan string acak Anda sendiri.
-app.config['SECRET_KEY'] = 'ganti-dengan-string-rahasia-yang-sangat-aman-untuk-session'
+app.config['SECRET_KEY'] = '8f4a7b1e9c2d5a3b6f8e7d4c1a9b3e5f7d2c8a1b4e6f9d3c5b7a2e8f1d9c4b6a'
 
 # ==============================================================================
 # FUNGSI HELPER UNTUK SHOPEE API V2
