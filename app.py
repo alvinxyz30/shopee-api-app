@@ -1,75 +1,59 @@
-from flask import Flask, redirect, request, session, render_template
-import hashlib, hmac, time, requests, os, logging
+from flask import Flask, redirect, request
+import time
+import hmac
+import hashlib
+import urllib.parse
+import logging
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
-PARTNER_ID = 1175215
-PARTNER_KEY = 'shpk6359494e627473757766626a516a494e79634950757676496c62656f6c4d'  # ganti dengan key asli kamu
-API_BASE_URL = 'https://partner.test-stable.shopeemobile.com/api/v2'
-REDIRECT_URL = 'https://alvinnovendra2.pythonanywhere.com/callback'
+# Konfigurasi (sandbox)
+PARTNER_ID = "1175215"
+PARTNER_KEY = "shpk6359494e627473757766626a516a494e79634950757676496c62656f6c4d"
+REDIRECT_URL = "https://alvinnovendra2.pythonanywhere.com/callback"
+API_BASE_URL = "https://partner.test-stable.shopeemobile.com"
 
-# Logging setup
-logging.basicConfig(filename="shopee_oauth.log", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging
+logging.basicConfig(level=logging.INFO)
 
-def gen_signature(path, timestamp):
-    base_string = f"{PARTNER_ID}{path}{timestamp}"
-    signature = hmac.new(PARTNER_KEY.encode(), base_string.encode(), hashlib.sha256).hexdigest()
-    logging.info(f"Base string: {base_string}")
-    logging.info(f"Generated sign: {signature}")
-    return signature
-
-@app.route('/')
+@app.route("/")
 def index():
-    if 'access_token' in session:
-        return render_template('index.html', logged_in=True)
-    return render_template('index.html', logged_in=False)
-
-@app.route('/login')
-def login():
+    # 1. Buat timestamp saat ini
     timestamp = int(time.time())
-    path = '/shop/auth_partner'
-    sign = gen_signature(path, timestamp)
+    logging.info(f"Timestamp: {timestamp}")
 
-    login_url = (
-        f"{API_BASE_URL}{path}"
-        f"?partner_id={PARTNER_ID}&timestamp={timestamp}&sign={sign}&redirect={REDIRECT_URL}"
-    )
+    # 2. Buat base string untuk signature
+    base_string = f"{PARTNER_ID}/shop/auth_partner{timestamp}"
+    logging.info(f"Base string: {base_string}")
+
+    # 3. Generate HMAC SHA256 signature
+    sign = hmac.new(
+        PARTNER_KEY.encode(),
+        base_string.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    logging.info(f"Generated sign: {sign}")
+
+    # 4. Buat URL Shopee login OAuth
+    params = {
+        "partner_id": PARTNER_ID,
+        "timestamp": timestamp,
+        "sign": sign,
+        "redirect": REDIRECT_URL
+    }
+    query_string = urllib.parse.urlencode(params)
+    login_url = f"{API_BASE_URL}/api/v2/shop/auth_partner?{query_string}"
     logging.info(f"Redirecting to Shopee login: {login_url}")
+
+    # 5. Redirect user ke Shopee
     return redirect(login_url)
 
-@app.route('/callback')
+@app.route("/callback")
 def callback():
-    code = request.args.get('code')
-    shop_id = request.args.get('shop_id')
-    timestamp = int(time.time())
-    path = '/auth/token/get'
-    sign = gen_signature(path, timestamp)
+    code = request.args.get("code")
+    shop_id = request.args.get("shop_id")
+    logging.info(f"Callback received: code={code}, shop_id={shop_id}")
+    return f"Callback berhasil! Code: {code}, Shop ID: {shop_id}"
 
-    payload = {
-        'code': code,
-        'shop_id': int(shop_id),
-        'partner_id': PARTNER_ID,
-        'sign': sign,
-        'timestamp': timestamp
-    }
-
-    logging.info(f"Callback payload: {payload}")
-
-    try:
-        res = requests.post(API_BASE_URL + path, json=payload)
-        res_json = res.json()
-        logging.info(f"Token response: {res_json}")
-
-        if 'access_token' in res_json:
-            session['access_token'] = res_json['access_token']
-            session['shop_id'] = shop_id
-            return redirect('/')
-        else:
-            return f"Token Error: {res_json}", 400
-    except Exception as e:
-        logging.exception("Exception during token retrieval")
-        return f"Internal Error: {e}", 500
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
