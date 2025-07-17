@@ -16,11 +16,12 @@
     # ==============================================================================
     # ID Partner dari Shopee Developer Center
     PARTNER_ID = 2012002
+
     # Kunci Partner dari Shopee Developer Center
-    PARTNER_KEY = "shpk715045424a75484f6b7379476f4c44444d506b4d4b6f7a6d4f544a4f6a6d"
+    PARTNER_KEY = "GANTI_DENGAN_PARTNER_KEY_ANDA"
 
     # Domain tempat aplikasi Anda berjalan (tanpa / di akhir)
-    REDIRECT_URL_DOMAIN = "https://alvinnovendra2.pythonanywhere.com" 
+    REDIRECT_URL_DOMAIN = "shpk715045424a75484f6b7379476f4c44444d506b4d4b6f7a6d4f544a4f6a6d" 
 
     # URL dasar API Shopee. Gunakan ini untuk PRODUKSI.
     # Untuk Sandbox, ganti menjadi: "https://partner.test-stable.shopeemobile.com"
@@ -248,7 +249,6 @@
                     df = pd.json_normalize(detailed_orders, sep='_')
 
             elif data_type == 'products':
-                # PERBAIKAN: Logika paginasi produk diperbarui untuk menggunakan next_offset
                 all_items = []
                 offset = 0
                 while True:
@@ -257,7 +257,14 @@
                         "page_size": 100,
                         "item_status": ["NORMAL", "UNLIST"]
                     }
-                    response, error = call_shopee_api("/api/v2/product/get_item_list", shop_id=shop_id, access_token=access_token, body=list_body)
+                    # PERBAIKAN: Menggunakan method='GET' sesuai dokumentasi API
+                    response, error = call_shopee_api(
+                        "/api/v2/product/get_item_list",
+                        method='GET',
+                        shop_id=shop_id,
+                        access_token=access_token,
+                        body=list_body
+                    )
                     if error:
                         raise Exception(f"Gagal mengambil daftar produk: {error}")
 
@@ -267,24 +274,20 @@
                     if item_list:
                         item_ids = [item['item_id'] for item in item_list]
                         
-                        # Ambil detail produk per batch
                         detail_body = {"item_id_list": item_ids}
                         detail_response, detail_error = call_shopee_api("/api/v2/product/get_item_base_info", shop_id=shop_id, access_token=access_token, body=detail_body)
                         if not detail_error:
                             all_items.extend(detail_response.get('response', {}).get('item_list', []))
 
-                    # Gunakan next_offset dari respons untuk halaman berikutnya
                     if "next_offset" in response_data:
                         offset = response_data["next_offset"]
                     else:
-                        # Jika tidak ada next_offset, berarti ini halaman terakhir
                         break
                 
                 if all_items:
                     df = pd.DataFrame(all_items)
 
             elif data_type == 'returns':
-                # Ambil semua retur dengan paginasi page_no
                 all_returns = []
                 page_no = 1
                 while True:
@@ -300,7 +303,6 @@
                     all_returns.extend(return_list)
                     page_no += 1
 
-                # Proses data retur menjadi format yang lebih mudah dibaca
                 if all_returns:
                     processed_returns = []
                     for ret in all_returns:
@@ -320,21 +322,17 @@
 
             # --- AKHIR DISPATCHER ---
 
-            # Cek jika tidak ada data ditemukan
             if df.empty:
                 flash(f"Tidak ada data ditemukan untuk laporan '{data_type}'.", 'warning')
                 return redirect(url_for('dashboard'))
 
-            # Buat file Excel di memori
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name=data_type)
             output.seek(0)
             
-            # Buat nama file dinamis
             filename = f"laporan_{data_type}_{shop_id}_{datetime.now().strftime('%Y%m%d')}.xlsx"
             
-            # Kirim file untuk diunduh
             response = make_response(output.read())
             response.headers["Content-Disposition"] = f"attachment; filename={filename}"
             response.headers["Content-Type"] = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
