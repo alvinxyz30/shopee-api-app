@@ -5,33 +5,39 @@ import hmac
 import hashlib
 import requests
 import json
-from flask import Flask, request, redirect, url_for, render_template, session, flash, make_response
-from datetime import datetime, timedelta
-import pandas as pd
-import io
+from flask import Flask, request, redirect, url_for, render_template, session, flash
+from datetime import datetime, timedelta # Pastikan ini diimpor
 
 # ==============================================================================
-# KONFIGURASI APLIKASI
+# KONFIGURASI WAJIB
+# Ganti nilai-nilai di bawah ini dengan data Anda.
 # ==============================================================================
-# PENTING: Ganti nilai-nilai ini dengan data Anda sebelum menjalankan.
-# Jaga kerahasiaan Partner Key Anda.
-PARTNER_ID = 2012002
-PARTNER_KEY = "shpk715045424a75484f6b7379476f4c44444d506b4d4b6f7a6d4f544a4f6a6d"
-REDIRECT_URL_DOMAIN = "https://alvinnovendra2.pythonanywhere.com" # Ganti dengan domain Anda
+# ID Partner dari Shopee Developer Center
+PARTNER_ID = 0  # GANTI DENGAN PARTNER ID ANDA
+
+# Kunci Partner dari Shopee Developer Center
+PARTNER_KEY = "GANTI_DENGAN_PARTNER_KEY_ANDA"
+
+# Domain tempat aplikasi Anda berjalan (tanpa / di akhir)
+REDIRECT_URL_DOMAIN = "https://alvinnovendra2.pythonanywhere.com" 
+
+# URL dasar API Shopee. Gunakan ini untuk PRODUKSI.
+# Untuk Sandbox, ganti menjadi: "https://partner.test-stable.shopeemobile.com"
 BASE_URL = "https://partner.shopeemobile.com"
 
 # ==============================================================================
-# INISIALISASI FLASK
+# INISIALISASI APLIKASI FLASK
 # ==============================================================================
 app = Flask(__name__)
-# Kunci rahasia ini penting untuk keamanan session. Ganti dengan string acak Anda sendiri.
-app.config['SECRET_KEY'] = '8f4a7b1e9c2d5a3b6f8e7d4c1a9b3e5f7d2c8a1b4e6f9d3c5b7a2e8f1d9c4b6a'
+
+# Kunci rahasia yang kuat untuk mengamankan session. Tidak perlu diubah.
+app.config['SECRET_KEY'] = 'pbkdf2:sha256:600000$V8iLpGcE9aQzRkYw$9a8f3b1e2c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f'
 
 # ==============================================================================
-# FUNGSI HELPER UNTUK SHOPEE API V2
+# FUNGSI HELPER UNTUK API SHOPEE
 # ==============================================================================
 def generate_signature(path, timestamp, access_token=None, shop_id=None):
-    """Membuat signature untuk semua jenis panggilan API V2."""
+    """Membuat signature untuk otentikasi panggilan API V2."""
     partner_id_str = str(PARTNER_ID)
     base_string_parts = [partner_id_str, path, str(timestamp)]
     if access_token:
@@ -46,19 +52,14 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
     """Fungsi generik untuk memanggil semua endpoint Shopee API v2."""
     timestamp = int(time.time())
     
-    # Validasi awal bahwa konfigurasi sudah diisi
-    if not all([PARTNER_ID, PARTNER_KEY not in ["", "GANTI_DENGAN_PARTNER_KEY_PRODUKSI_ANDA"]]):
+    if not all([PARTNER_ID, PARTNER_KEY not in ["", "GANTI_DENGAN_PARTNER_KEY_ANDA"]]):
         msg = "Partner ID / Partner Key belum diatur di file konfigurasi."
         app.logger.error(msg)
         return None, msg
 
     sign = generate_signature(path, timestamp, access_token, shop_id)
     
-    params = {
-        "partner_id": PARTNER_ID,
-        "timestamp": timestamp,
-        "sign": sign
-    }
+    params = {"partner_id": PARTNER_ID, "timestamp": timestamp, "sign": sign}
     if access_token:
         params["access_token"] = access_token
     if shop_id:
@@ -70,7 +71,7 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
     try:
         if method.upper() == 'POST':
             response = requests.post(full_url, params=params, json=body, headers=headers, timeout=20)
-        else: # GET
+        else:
             response = requests.get(full_url, params={**params, **(body or {})}, headers=headers, timeout=20)
         
         response.raise_for_status()
@@ -92,17 +93,29 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
         return None, error_msg
 
 # ==============================================================================
-# RUTE-RUTE UTAMA APLIKASI
+# RUTE-RUTE (HALAMAN) APLIKASI
 # ==============================================================================
 @app.route('/')
 def dashboard():
-    """Halaman utama, menampilkan toko dari session."""
+    """Menampilkan halaman utama dengan daftar toko dari session."""
     shops = session.get('shops', {})
-    return render_template('dashboard_no_db.html', shops=shops)
+    
+    # PERBAIKAN: Siapkan tanggal default di sini, bukan di HTML
+    today = datetime.now()
+    date_to_default = today.strftime('%Y-%m-%d')
+    date_from_default = (today - timedelta(days=7)).strftime('%Y-%m-%d')
+
+    # Kirim variabel tanggal ke template
+    return render_template(
+        'dashboard.html', 
+        shops=shops, 
+        date_from=date_from_default, 
+        date_to=date_to_default
+    )
 
 @app.route('/authorize')
 def authorize():
-    """Mengarahkan user ke halaman otorisasi Shopee."""
+    """Mengarahkan pengguna ke halaman otorisasi Shopee."""
     path = "/api/v2/shop/auth_partner"
     sign = generate_signature(path, int(time.time()))
     redirect_full_url = f"{REDIRECT_URL_DOMAIN}{url_for('callback')}"
@@ -112,7 +125,7 @@ def authorize():
 
 @app.route('/callback')
 def callback():
-    """Menangani callback dan menyimpan data ke session."""
+    """Menangani callback dari Shopee setelah otorisasi."""
     code = request.args.get('code')
     shop_id_str = request.args.get('shop_id')
 
@@ -120,7 +133,7 @@ def callback():
         flash("Callback dari Shopee tidak valid.", 'danger')
         return redirect(url_for('dashboard'))
 
-    # 1. Tukarkan 'code' dengan 'access_token'
+    # Langkah 1: Tukarkan 'code' dengan 'access_token'
     path_token = "/api/v2/auth/token/get"
     body_token = {"code": code, "shop_id": int(shop_id_str)}
     token_data, error = call_shopee_api(path_token, body=body_token)
@@ -130,66 +143,55 @@ def callback():
         return redirect(url_for('dashboard'))
 
     access_token = token_data.get('access_token')
-    refresh_token = token_data.get('refresh_token')
-    expire_in = token_data.get('expire_in')
-
-    if not all([access_token, refresh_token, expire_in]):
+    if not access_token:
         flash("Respons token dari Shopee tidak lengkap.", 'danger')
         return redirect(url_for('dashboard'))
 
-    # 2. Ambil informasi toko
+    # Langkah 2: Ambil informasi toko (termasuk nama toko)
     path_info = "/api/v2/shop/get_shop_info"
     info_data, error = call_shopee_api(path_info, shop_id=int(shop_id_str), access_token=access_token)
-    shop_name = f"Toko {shop_id_str}"
+    shop_name = f"Toko {shop_id_str}" # Nama default jika API gagal
     if error:
         flash(f"Gagal mendapatkan info nama toko: {error}. Menggunakan ID sebagai nama.", 'warning')
     else:
         shop_name = info_data.get('response', {}).get('shop_name', shop_name)
 
-    # 3. Simpan atau update data toko di session
-    # 'shops' akan disimpan sebagai dictionary, dengan shop_id sebagai key
+    # Langkah 3: Simpan semua data toko ke dalam session
     shops = session.get('shops', {})
     shops[shop_id_str] = {
         'shop_id': shop_id_str,
         'shop_name': shop_name,
         'access_token': access_token,
-        'refresh_token': refresh_token,
-        'expire_in': int(time.time()) + expire_in
+        'refresh_token': token_data.get('refresh_token'),
+        'expire_in': int(time.time()) + token_data.get('expire_in', 14400)
     }
     session['shops'] = shops
-    session.modified = True  # Pastikan session disimpan
+    session.modified = True
 
-    flash(f"Toko '{shop_name}' berhasil dihubungkan ke sesi ini.", 'success')
+    flash(f"Toko '{shop_name}' berhasil dihubungkan.", 'success')
     return redirect(url_for('dashboard'))
     
 @app.route('/clear_session')
 def clear_session():
-    """Menghapus semua data dari session."""
+    """Menghapus semua data dari session untuk memulai dari awal."""
     session.clear()
     flash('Semua data sesi dan toko terhubung telah dihapus.', 'info')
     return redirect(url_for('dashboard'))
 
-
+# Placeholder untuk fungsi yang belum diimplementasikan
 @app.route('/fetch_data', methods=['POST'])
 def fetch_data():
-    """Menarik data dari API dan menampilkannya di halaman web (dengan paginasi)."""
-    # Implementasi fungsi ini akan memerlukan file template view_data.html
-    flash("Fungsi 'Lihat Data' belum diimplementasikan sepenuhnya dalam versi ini.", 'info')
+    flash("Fungsi 'Lihat Data' belum diimplementasikan.", 'info')
     return redirect(url_for('dashboard'))
-
 
 @app.route('/export', methods=['POST'])
 def export_data():
-    """Mengekspor data ke file Excel dan mengunduhnya."""
-    # Implementasi fungsi ini memerlukan logika paginasi lengkap untuk menarik semua data
-    flash("Fungsi 'Export Excel' belum diimplementasikan sepenuhnya dalam versi ini.", 'info')
+    flash("Fungsi 'Export Excel' belum diimplementasikan.", 'info')
     return redirect(url_for('dashboard'))
 
 # ==============================================================================
-# ENTRY POINT APLIKASI
+# ENTRY POINT UNTUK MENJALANKAN APLIKASI
 # ==============================================================================
 if __name__ == '__main__':
-    # Jalankan aplikasi Flask
-    # host='0.0.0.0' agar bisa diakses dari jaringan lokal
+    # 'debug=True' berguna untuk development, tapi matikan saat produksi
     app.run(host='0.0.0.0', port=5001, debug=True)
-
