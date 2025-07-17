@@ -4,6 +4,7 @@ import hashlib
 import time
 import requests
 import urllib.parse
+import json
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'  # Ganti sesuai kebutuhan
@@ -12,26 +13,36 @@ PARTNER_ID = 1175215
 PARTNER_KEY = 'shpk6359494e627473757766626a516a494e79634950757676496c62656f6c4d'
 REDIRECT_URL = 'https://alvinnovedra2.pythonanywhere.com/callback'
 CALLBACK_PATH = '/callback'
-AUTH_BASE_URL = 'https://partner.test-stable.shopeemobile.com/api/v2/shop/auth_partner'
 
+# Generate the correct OAuth2 authorization URL using newer flow
 def generate_auth_url():
     timestamp = int(time.time())
-    path = "/api/v2/shop/auth_partner"
-    base_string = f"{PARTNER_ID}{path}{timestamp}"
-    sign = hmac.new(
-        PARTNER_KEY.encode('utf-8'),
-        base_string.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()
+    next_url = f"https://partner.test-stable.shopeemobile.com/api/v2/shop/auth_partner?isRedirect=true"
 
-    query = {
-        'partner_id': PARTNER_ID,
-        'timestamp': timestamp,
-        'sign': sign,
-        'redirect': REDIRECT_URL
+    state = {
+        "nonce": "some_random_string",  # Bisa random UUID juga
+        "id": PARTNER_ID,
+        "auth_shop": 1,
+        "next_url": next_url,
+        "is_auth": 0
     }
-    url = f"{AUTH_BASE_URL}?{urllib.parse.urlencode(query)}"
-    return url
+
+    state_json = json.dumps(state, separators=(',', ':'))
+    encoded_state = urllib.parse.quote(state_json)
+
+    # Create base string
+    base_string = f"client_id=dfc11909fd05496491c33433d61b7020&lang=en&login_types=[1,4,2]&max_auth_age=3600&redirect_uri=https://open.sandbox.test-stable.shopee.com/api/v1/oauth2/callback&region=SG&required_passwd=true&respond_code=code&scope=profile&state={encoded_state}&timestamp={timestamp}&title=sla_title_open_platform_app_login"
+
+    sign = hmac.new(PARTNER_KEY.encode(), base_string.encode(), hashlib.sha256).hexdigest()
+
+    oauth_url = (
+        f"https://account.sandbox.test-stable.shopee.com/signin/oauth/accountchooser?"
+        f"client_id=dfc11909fd05496491c33433d61b7020&lang=en&login_types=%5B1%2C4%2C2%5D&max_auth_age=3600"
+        f"&redirect_uri=https%3A%2F%2Fopen.sandbox.test-stable.shopee.com%2Fapi%2Fv1%2Foauth2%2Fcallback&region=SG"
+        f"&required_passwd=true&respond_code=code&scope=profile&state={encoded_state}"
+        f"&timestamp={timestamp}&title=sla_title_open_platform_app_login&sign={sign}"
+    )
+    return oauth_url
 
 @app.route('/')
 def index():
@@ -67,7 +78,7 @@ def callback():
         hashlib.sha256
     ).hexdigest()
 
-    token_url = f"https://partner.test-stable.shopeemobile.com{token_path}"
+    token_url = f"https://partner.test-stable.shopeeemobile.com{token_path}"
     payload = {
         'code': code,
         'partner_id': PARTNER_ID,
@@ -92,7 +103,7 @@ def callback():
             hashlib.sha256
         ).hexdigest()
 
-        detail_url = f"https://partner.test-stable.shopeemobile.com{detail_path}"
+        detail_url = f"https://partner.test-stable.shopeeemobile.com{detail_path}"
         headers = {'Content-Type': 'application/json'}
         params = {
             'partner_id': PARTNER_ID,
