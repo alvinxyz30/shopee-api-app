@@ -62,14 +62,15 @@ def callback():
     shop_id = request.args.get('shop_id')
     timestamp = int(time.time())
 
-    base_string = f"{PARTNER_ID}{request.path}{timestamp}{code}"
+    token_path = '/api/v2/auth/token/get'
+    base_string = f"{PARTNER_ID}{token_path}{timestamp}{code}"
     sign = hmac.new(
         PARTNER_KEY.encode('utf-8'),
         base_string.encode('utf-8'),
         hashlib.sha256
     ).hexdigest()
 
-    token_url = 'https://partner.test-stable.shopeemobile.com/api/v2/auth/token/get'
+    token_url = f"https://partner.test-stable.shopeemobile.com{token_path}"
     payload = {
         'code': code,
         'partner_id': PARTNER_ID,
