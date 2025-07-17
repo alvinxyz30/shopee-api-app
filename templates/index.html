@@ -1,24 +1,32 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Shopee Sales Report</title>
+  <title>Login Shopee</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin-top: 100px;
+    }
+    button {
+      background-color: #ee4d2d;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      font-size: 16px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #d63a1f;
+    }
+  </style>
 </head>
 <body>
-    <h1>Shopee Sales Report</h1>
-
-    {% if session.access_token %}
-        <form method="post" action="/get_sales">
-            <label for="date_from">Tanggal Mulai:</label>
-            <input type="date" id="date_from" name="date_from" required>
-
-            <label for="date_to">Tanggal Akhir:</label>
-            <input type="date" id="date_to" name="date_to" required>
-
-            <button type="submit">Export Penjualan</button>
-        </form>
-    {% else %}
-        <a href="/login">Login ke Shopee</a>
-    {% endif %}
+  <h1>Autentikasi Toko Shopee</h1>
+  <p>Klik tombol di bawah untuk login ke akun Shopee kamu:</p>
+  <a href="/login">
+    <button>Login ke Shopee</button>
+  </a>
 </body>
 </html>
