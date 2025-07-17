@@ -5,18 +5,20 @@ import hmac
 import hashlib
 import requests
 import json
-from flask import Flask, request, redirect, url_for, render_template, session, flash
-from datetime import datetime, timedelta # Pastikan ini diimpor
+from flask import Flask, request, redirect, url_for, render_template, session, flash, make_response
+from datetime import datetime, timedelta
+import pandas as pd
+import io
 
 # ==============================================================================
 # KONFIGURASI WAJIB
 # Ganti nilai-nilai di bawah ini dengan data Anda.
 # ==============================================================================
 # ID Partner dari Shopee Developer Center
-PARTNER_ID = 2012002
+PARTNER_ID = 0  # GANTI DENGAN PARTNER ID ANDA
 
 # Kunci Partner dari Shopee Developer Center
-PARTNER_KEY = "shpk715045424a75484f6b7379476f4c44444d506b4d4b6f7a6d4f544a4f6a6d"
+PARTNER_KEY = "GANTI_DENGAN_PARTNER_KEY_ANDA"
 
 # Domain tempat aplikasi Anda berjalan (tanpa / di akhir)
 REDIRECT_URL_DOMAIN = "https://alvinnovendra2.pythonanywhere.com" 
@@ -70,9 +72,9 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
 
     try:
         if method.upper() == 'POST':
-            response = requests.post(full_url, params=params, json=body, headers=headers, timeout=20)
+            response = requests.post(full_url, params=params, json=body, headers=headers, timeout=30)
         else:
-            response = requests.get(full_url, params={**params, **(body or {})}, headers=headers, timeout=20)
+            response = requests.get(full_url, params={**params, **(body or {})}, headers=headers, timeout=30)
         
         response.raise_for_status()
         response_data = response.json()
@@ -100,14 +102,12 @@ def dashboard():
     """Menampilkan halaman utama dengan daftar toko dari session."""
     shops = session.get('shops', {})
     
-    # Siapkan tanggal default di sini, bukan di HTML
     today = datetime.now()
     date_to_default = today.strftime('%Y-%m-%d')
     date_from_default = (today - timedelta(days=7)).strftime('%Y-%m-%d')
 
-    # Kirim variabel tanggal ke template
     return render_template(
-        'dashboard.html', # Pastikan nama file ini benar
+        'dashboard.html', 
         shops=shops, 
         date_from=date_from_default, 
         date_to=date_to_default
@@ -133,7 +133,6 @@ def callback():
         flash("Callback dari Shopee tidak valid.", 'danger')
         return redirect(url_for('dashboard'))
 
-    # Langkah 1: Tukarkan 'code' dengan 'access_token'
     path_token = "/api/v2/auth/token/get"
     body_token = {"code": code, "shop_id": int(shop_id_str)}
     token_data, error = call_shopee_api(path_token, body=body_token)
@@ -147,16 +146,14 @@ def callback():
         flash("Respons token dari Shopee tidak lengkap.", 'danger')
         return redirect(url_for('dashboard'))
 
-    # Langkah 2: Ambil informasi toko (termasuk nama toko)
     path_info = "/api/v2/shop/get_shop_info"
     info_data, error = call_shopee_api(path_info, shop_id=int(shop_id_str), access_token=access_token)
-    shop_name = f"Toko {shop_id_str}" # Nama default jika API gagal
+    shop_name = f"Toko {shop_id_str}"
     if error:
         flash(f"Gagal mendapatkan info nama toko: {error}. Menggunakan ID sebagai nama.", 'warning')
     else:
         shop_name = info_data.get('response', {}).get('shop_name', shop_name)
 
-    # Langkah 3: Simpan semua data toko ke dalam session
     shops = session.get('shops', {})
     shops[shop_id_str] = {
         'shop_id': shop_id_str,
@@ -178,20 +175,175 @@ def clear_session():
     flash('Semua data sesi dan toko terhubung telah dihapus.', 'info')
     return redirect(url_for('dashboard'))
 
-# Placeholder untuk fungsi yang belum diimplementasikan
+# Placeholder untuk fungsi lihat data
 @app.route('/fetch_data', methods=['POST'])
 def fetch_data():
-    flash("Fungsi 'Lihat Data' belum diimplementasikan.", 'info')
+    flash("Fungsi 'Lihat Data' belum diimplementasikan. Gunakan tombol 'Export Excel'.", 'info')
     return redirect(url_for('dashboard'))
 
+# ==============================================================================
+# FUNGSI EXPORT DATA (IMPLEMENTASI BARU)
+# ==============================================================================
 @app.route('/export', methods=['POST'])
 def export_data():
-    flash("Fungsi 'Export Excel' belum diimplementasikan.", 'info')
-    return redirect(url_for('dashboard'))
+    """
+    Dispatcher untuk menangani ekspor data ke Excel berdasarkan data_type.
+    """
+    shop_id = request.form.get('shop_id')
+    data_type = request.form.get('data_type')
+    
+    shop_data = session.get('shops', {}).get(shop_id)
+    if not shop_data:
+        flash(f"Toko dengan ID {shop_id} tidak ditemukan di sesi ini.", 'danger')
+        return redirect(url_for('dashboard'))
+    
+    access_token = shop_data['access_token']
+    df = pd.DataFrame() # DataFrame kosong sebagai default
+
+    try:
+        # --- DISPATCHER LOGIC ---
+        if data_type == 'orders':
+            # 1. Ambil Parameter Tanggal
+            date_from_str = request.form.get('date_from')
+            date_to_str = request.form.get('date_to')
+            time_from = int(datetime.strptime(date_from_str, '%Y-%m-%d').timestamp())
+            # Tambah 1 hari ke date_to untuk mencakup seluruh hari tersebut
+            time_to = int((datetime.strptime(date_to_str, '%Y-%m-%d') + timedelta(days=1)).timestamp())
+
+            # 2. Ambil semua Order SN dengan paginasi cursor
+            all_order_sn_list = []
+            cursor = ""
+            while True:
+                order_list_body = {
+                    "time_range_field": "create_time",
+                    "time_from": time_from,
+                    "time_to": time_to,
+                    "page_size": 100,
+                    "cursor": cursor
+                }
+                response, error = call_shopee_api("/api/v2/order/get_order_list", shop_id=shop_id, access_token=access_token, body=order_list_body)
+                if error:
+                    raise Exception(f"Gagal mengambil daftar pesanan: {error}")
+                
+                order_list = response.get('response', {}).get('order_list', [])
+                for order in order_list:
+                    all_order_sn_list.append(order['order_sn'])
+                
+                if not response.get('response', {}).get('more', False):
+                    break
+                cursor = response.get('response', {}).get('next_cursor', "")
+
+            # 3. Ambil detail pesanan dalam batch
+            detailed_orders = []
+            if all_order_sn_list:
+                for i in range(0, len(all_order_sn_list), 50):
+                    batch = all_order_sn_list[i:i+50]
+                    detail_body = {"order_sn_list": batch}
+                    response, error = call_shopee_api("/api/v2/order/get_order_detail", shop_id=shop_id, access_token=access_token, body=detail_body)
+                    if error:
+                        app.logger.error(f"Gagal mengambil detail untuk batch: {error}")
+                        continue # Lanjutkan ke batch berikutnya
+                    detailed_orders.extend(response.get('response', {}).get('order_list', []))
+            
+            if detailed_orders:
+                df = pd.json_normalize(detailed_orders, sep='_')
+
+        elif data_type == 'products':
+            # Ambil semua produk dengan paginasi offset
+            all_items = []
+            offset = 0
+            while True:
+                list_body = {
+                    "offset": offset,
+                    "page_size": 100,
+                    "item_status": ["NORMAL", "UNLIST"]
+                }
+                response, error = call_shopee_api("/api/v2/product/get_item_list", shop_id=shop_id, access_token=access_token, body=list_body)
+                if error:
+                    raise Exception(f"Gagal mengambil daftar produk: {error}")
+
+                item_list = response.get('response', {}).get('item', [])
+                if not item_list:
+                    break
+                
+                item_ids = [item['item_id'] for item in item_list]
+                
+                # Ambil detail produk per batch
+                detail_body = {"item_id_list": item_ids}
+                detail_response, detail_error = call_shopee_api("/api/v2/product/get_item_base_info", shop_id=shop_id, access_token=access_token, body=detail_body)
+                if not detail_error:
+                    all_items.extend(detail_response.get('response', {}).get('item_list', []))
+
+                offset += 100
+            
+            if all_items:
+                df = pd.DataFrame(all_items)
+
+        elif data_type == 'returns':
+            # Ambil semua retur dengan paginasi page_no
+            all_returns = []
+            page_no = 1
+            while True:
+                return_body = {"page_no": page_no, "page_size": 50}
+                response, error = call_shopee_api("/api/v2/returns/get_return_list", shop_id=shop_id, access_token=access_token, body=return_body)
+                if error:
+                    raise Exception(f"Gagal mengambil daftar retur: {error}")
+                
+                return_list = response.get('response', {}).get('return', [])
+                if not return_list:
+                    break
+                
+                all_returns.extend(return_list)
+                page_no += 1
+
+            # Proses data retur menjadi format yang lebih mudah dibaca
+            if all_returns:
+                processed_returns = []
+                for ret in all_returns:
+                    processed_item = {
+                        "Nomor Pesanan": ret.get('order_sn'),
+                        "Nomor Retur": ret.get('return_sn'),
+                        "Status": ret.get('status'),
+                        "Alasan": ret.get('reason'),
+                        "Tanggal Dibuat": datetime.fromtimestamp(ret.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('create_time') else None,
+                        "Metode Pembayaran": ret.get('payment_method'),
+                        "Resi Pengembalian": ret.get('logistics', {}).get('tracking_number'),
+                        "Total Pengembalian Dana": ret.get('refund_amount'),
+                        "Alasan Teks dari Pembeli": ret.get('text_reason')
+                    }
+                    processed_returns.append(processed_item)
+                df = pd.DataFrame(processed_returns)
+
+        # --- AKHIR DISPATCHER ---
+
+        # Cek jika tidak ada data ditemukan
+        if df.empty:
+            flash(f"Tidak ada data ditemukan untuk laporan '{data_type}'.", 'warning')
+            return redirect(url_for('dashboard'))
+
+        # Buat file Excel di memori
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name=data_type)
+        output.seek(0)
+        
+        # Buat nama file dinamis
+        filename = f"laporan_{data_type}_{shop_id}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        
+        # Kirim file untuk diunduh
+        response = make_response(output.read())
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        response.headers["Content-Type"] = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        
+        return response
+
+    except Exception as e:
+        app.logger.error(f"Gagal mengekspor data: {e}")
+        flash(f"Terjadi kesalahan saat membuat laporan: {e}", 'danger')
+        return redirect(url_for('dashboard'))
 
 # ==============================================================================
 # ENTRY POINT UNTUK MENJALANKAN APLIKASI
 # ==============================================================================
 if __name__ == '__main__':
-    # 'debug=True' berguna untuk development, tapi matikan saat produksi
     app.run(host='0.0.0.0', port=5001, debug=True)
