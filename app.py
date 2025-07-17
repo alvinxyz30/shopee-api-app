@@ -14,7 +14,9 @@ PARTNER_KEY = 'shpk6359494e627473757766626a516a494e79634950757676496c62656f6c4d'
 REDIRECT_URL = 'https://alvinnovedra2.pythonanywhere.com/callback'
 CALLBACK_PATH = '/callback'
 
+CLIENT_ID = 'dfc11909fd05496491c33433d61b7020'
 LOGIN_BASE = 'https://account.sandbox.test-stable.shopee.com/signin/oauth/identifier'
+CALLBACK_REDIRECT_URI = 'https://open.sandbox.test-stable.shopee.com/api/v1/oauth2/callback'
 
 @app.route('/')
 def index():
@@ -38,18 +40,18 @@ def login():
         "nonce": "some_random_string",
         "id": PARTNER_ID,
         "auth_shop": 1,
-        "next_url": f"https://partner.test-stable.shopeemobile.com/api/v2/shop/auth_partner?isRedirect=true",
+        "next_url": "https://partner.test-stable.shopeemobile.com/api/v2/shop/auth_partner?isRedirect=true",
         "is_auth": 0
     })
-    base_string = f"dfc11909fd05496491c33433d61b7020{timestamp}"
+    base_string = f"{CLIENT_ID}{timestamp}"
     sign = hmac.new(PARTNER_KEY.encode(), base_string.encode(), hashlib.sha256).hexdigest()
 
     params = {
-        "client_id": "dfc11909fd05496491c33433d61b7020",
+        "client_id": CLIENT_ID,
         "lang": "en",
         "login_types": "[1,4,2]",
         "max_auth_age": "3600",
-        "redirect_uri": "https://open.sandbox.test-stable.shopee.com/api/v1/oauth2/callback",
+        "redirect_uri": CALLBACK_REDIRECT_URI,
         "region": "SG",
         "required_passwd": "true",
         "respond_code": "code",
