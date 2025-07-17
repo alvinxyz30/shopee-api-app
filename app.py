@@ -5,6 +5,10 @@ from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 import time
 import json
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from shopee_api import ShopeeAPI, ShopeeAPIError
 from utils import (
@@ -33,7 +37,7 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key')
 
 # Initialize Shopee API
 shopee_api = ShopeeAPI(
-    partner_id=os.environ.get('SHOPEE_PARTNER_ID', 'your_partner_id'),
+    partner_id=int(os.environ.get('SHOPEE_PARTNER_ID', '0')),
     partner_key=os.environ.get('SHOPEE_PARTNER_KEY', 'your_partner_key'),
     base_url=os.environ.get('SHOPEE_BASE_URL', 'https://partner.test-stable.shopeemobile.com')
 )
