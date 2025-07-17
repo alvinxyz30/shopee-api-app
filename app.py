@@ -17,8 +17,8 @@ AUTH_BASE_URL = 'https://partner.test-stable.shopeemobile.com/api/v2/shop/auth_p
 
 def generate_auth_url():
     timestamp = int(time.time())
-    raw_redirect = urllib.parse.unquote(REDIRECT_URL)
-    base_string = f"{PARTNER_ID}/api/v2/shop/auth_partner{timestamp}{raw_redirect}"
+    path = "/api/v2/shop/auth_partner"
+    base_string = f"{PARTNER_ID}{path}{timestamp}"
     sign = hmac.new(
         PARTNER_KEY.encode('utf-8'),
         base_string.encode('utf-8'),
@@ -29,10 +29,11 @@ def generate_auth_url():
         'partner_id': PARTNER_ID,
         'timestamp': timestamp,
         'sign': sign,
-        'redirect': REDIRECT_URL  # tetap encoded karena dipakai di URL
+        'redirect': REDIRECT_URL  # tetap dimasukkan ke query, tapi tidak dipakai dalam base_string
     }
     url = f"{AUTH_BASE_URL}?{urllib.parse.urlencode(query)}"
     return url
+
 
 
 @app.route('/')
