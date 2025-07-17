@@ -1,21 +1,22 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file
-from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
 import os
 import logging
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 import time
+import json
 
-from config import Config
-from models import db, Shop, APILog, DataExport
 from shopee_api import ShopeeAPI, ShopeeAPIError
 from utils import (
     validate_date_range, flatten_order_data, flatten_product_data, 
     flatten_return_data, export_to_excel, validate_shop_limit,
-    sanitize_filename, create_export_record, update_export_record,
-    convert_timestamp_to_datetime
+    sanitize_filename, convert_timestamp_to_datetime
 )
+
+# In-memory storage
+shops_data = {}
+api_logs = []
+data_exports = {}
 
 # Setup logging
 logging.basicConfig(
@@ -28,17 +29,13 @@ logging.basicConfig(
 )
 
 app = Flask(__name__)
-app.config.from_object(Config)
-
-# Initialize extensions
-db.init_app(app)
-migrate = Migrate(app, db)
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key')
 
 # Initialize Shopee API
 shopee_api = ShopeeAPI(
-    partner_id=app.config['SHOPEE_PARTNER_ID'],
-    partner_key=app.config['SHOPEE_PARTNER_KEY'],
-    base_url=app.config['SHOPEE_BASE_URL']
+    partner_id=os.environ.get('SHOPEE_PARTNER_ID', 'your_partner_id'),
+    partner_key=os.environ.get('SHOPEE_PARTNER_KEY', 'your_partner_key'),
+    base_url=os.environ.get('SHOPEE_BASE_URL', 'https://partner.test-stable.shopeemobile.com')
 )
 
 # Template filters
@@ -47,35 +44,54 @@ def timestamp_to_date_filter(timestamp):
     """Convert timestamp to readable date"""
     return convert_timestamp_to_datetime(timestamp)
 
-@app.before_request  
-def create_tables():
-    """Create database tables"""
-    if not hasattr(app, 'tables_created'):
-        db.create_all()
-        app.tables_created = True
+# Mock Shop class for in-memory storage
+class MockShop:
+    def __init__(self, shop_id, shop_name, access_token, refresh_token, expires_in):
+        self.shop_id = shop_id
+        self.shop_name = shop_name
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.expires_in = expires_in
+        self.created_at = datetime.now()
+        self.updated_at = datetime.now()
+        self.is_active = True
+    
+    @property
+    def is_token_valid(self):
+        if not self.access_token:
+            return False
+        expires_at = self.updated_at + timedelta(seconds=self.expires_in)
+        return datetime.now() < expires_at
+    
+    @property
+    def token_expires_soon(self):
+        if not self.access_token:
+            return False
+        expires_at = self.updated_at + timedelta(seconds=self.expires_in)
+        return datetime.now() + timedelta(hours=24) > expires_at
 
 @app.route('/')
 def index():
     """Homepage - menampilkan daftar toko"""
     try:
-        shops = Shop.query.filter_by(is_active=True).all()
-        return render_template('index.html', shops=shops, config=app.config)
+        shops = [shop for shop in shops_data.values() if shop.is_active]
+        return render_template('index.html', shops=shops)
     except Exception as e:
         app.logger.error(f"Error loading homepage: {str(e)}")
         flash('Terjadi kesalahan saat memuat halaman', 'error')
-        return render_template('index.html', shops=[], config=app.config)
+        return render_template('index.html', shops=[])
 
 @app.route('/add_shop')
 def add_shop():
     """Form untuk menambah toko baru"""
     try:
         # Cek batas maksimal toko
-        shop_count = Shop.query.filter_by(is_active=True).count()
+        shop_count = len([shop for shop in shops_data.values() if shop.is_active])
         if not validate_shop_limit(shop_count):
             flash('Maksimal 10 toko yang dapat ditambahkan', 'error')
             return redirect(url_for('index'))
         
-        return render_template('add_shop.html', config=app.config)
+        return render_template('add_shop.html')
     except Exception as e:
         app.logger.error(f"Error loading add shop page: {str(e)}")
         flash('Terjadi kesalahan saat memuat halaman', 'error')
@@ -94,7 +110,8 @@ def auth_shop():
             return redirect(url_for('add_shop'))
         
         # Generate auth URL
-        auth_url = shopee_api.generate_auth_url(app.config['SHOPEE_REDIRECT_URL'])
+        redirect_url = os.environ.get('SHOPEE_REDIRECT_URL', 'https://yourdomain.com/auth_callback')
+        auth_url = shopee_api.generate_auth_url(redirect_url)
         
         # Simpan credentials sementara di session (dalam production gunakan cache/redis)
         # Untuk sekarang kita redirect langsung ke auth URL
@@ -143,26 +160,25 @@ def auth_callback():
         shop_name = shop_info.get('shop_name', f'Shop {shop_id}')
         
         # Cek apakah toko sudah ada
-        existing_shop = Shop.query.filter_by(shop_id=shop_id).first()
-        
-        if existing_shop:
+        if shop_id in shops_data:
             # Update token yang sudah ada
-            existing_shop.update_tokens(access_token, refresh_token, expires_in)
-            existing_shop.shop_name = shop_name
-            existing_shop.is_active = True
+            shops_data[shop_id].access_token = access_token
+            shops_data[shop_id].refresh_token = refresh_token
+            shops_data[shop_id].expires_in = expires_in
+            shops_data[shop_id].shop_name = shop_name
+            shops_data[shop_id].updated_at = datetime.now()
+            shops_data[shop_id].is_active = True
             flash(f'Toko {shop_name} berhasil diperbarui', 'success')
         else:
             # Buat record toko baru
-            new_shop = Shop(
+            new_shop = MockShop(
                 shop_id=shop_id,
                 shop_name=shop_name,
-                shop_account=f'shop_{shop_id}',  # Placeholder
                 access_token=access_token,
                 refresh_token=refresh_token,
-                expires_at=datetime.utcnow() + timedelta(seconds=expires_in)
+                expires_in=expires_in
             )
-            db.session.add(new_shop)
-            db.session.commit()
+            shops_data[shop_id] = new_shop
             flash(f'Toko {shop_name} berhasil ditambahkan', 'success')
         
         return redirect(url_for('index'))
@@ -180,8 +196,8 @@ def auth_callback():
 def shop_detail(shop_id):
     """Detail toko dan pilihan data"""
     try:
-        shop = Shop.query.filter_by(shop_id=shop_id, is_active=True).first()
-        if not shop:
+        shop = shops_data.get(shop_id)
+        if not shop or not shop.is_active:
             flash('Toko tidak ditemukan', 'error')
             return redirect(url_for('index'))
         
@@ -201,7 +217,9 @@ def shop_detail(shop_id):
 def view_orders(shop_id):
     """View daftar order dengan pagination"""
     try:
-        shop = Shop.query.filter_by(shop_id=shop_id, is_active=True).first()
+        shop = shops_data.get(shop_id)
+        if not shop or not shop.is_active:
+            shop = None
         if not shop:
             flash('Toko tidak ditemukan', 'error')
             return redirect(url_for('index'))
@@ -277,7 +295,9 @@ def view_orders(shop_id):
 def view_products(shop_id):
     """View daftar produk dengan pagination"""
     try:
-        shop = Shop.query.filter_by(shop_id=shop_id, is_active=True).first()
+        shop = shops_data.get(shop_id)
+        if not shop or not shop.is_active:
+            shop = None
         if not shop:
             flash('Toko tidak ditemukan', 'error')
             return redirect(url_for('index'))
@@ -333,7 +353,9 @@ def view_products(shop_id):
 def view_returns(shop_id):
     """View daftar return dengan pagination"""
     try:
-        shop = Shop.query.filter_by(shop_id=shop_id, is_active=True).first()
+        shop = shops_data.get(shop_id)
+        if not shop or not shop.is_active:
+            shop = None
         if not shop:
             flash('Toko tidak ditemukan', 'error')
             return redirect(url_for('index'))
@@ -404,7 +426,9 @@ def view_returns(shop_id):
 def export_data(shop_id, data_type):
     """Export data ke Excel"""
     try:
-        shop = Shop.query.filter_by(shop_id=shop_id, is_active=True).first()
+        shop = shops_data.get(shop_id)
+        if not shop or not shop.is_active:
+            shop = None
         if not shop:
             return jsonify({'error': 'Toko tidak ditemukan'}), 404
         
@@ -579,10 +603,10 @@ def export_returns_data(shop, date_from=None, date_to=None):
 def delete_shop(shop_id):
     """Hapus toko (soft delete)"""
     try:
-        shop = Shop.query.filter_by(shop_id=shop_id).first()
+        shop = shops_data.get(shop_id)
         if shop:
             shop.is_active = False
-            db.session.commit()
+            # Shop updated in memory
             flash(f'Toko {shop.shop_name} berhasil dihapus', 'success')
         else:
             flash('Toko tidak ditemukan', 'error')
@@ -596,7 +620,9 @@ def delete_shop(shop_id):
 def api_logs(shop_id):
     """View API logs untuk debugging"""
     try:
-        shop = Shop.query.filter_by(shop_id=shop_id, is_active=True).first()
+        shop = shops_data.get(shop_id)
+        if not shop or not shop.is_active:
+            shop = None
         if not shop:
             flash('Toko tidak ditemukan', 'error')
             return redirect(url_for('index'))
@@ -604,9 +630,29 @@ def api_logs(shop_id):
         page = request.args.get('page', 1, type=int)
         per_page = 50
         
-        logs = APILog.query.filter_by(shop_id=shop_id)\
-                          .order_by(APILog.created_at.desc())\
-                          .paginate(page=page, per_page=per_page, error_out=False)
+        # Filter logs untuk shop tertentu
+        shop_logs = [log for log in api_logs if log.get('shop_id') == shop_id]
+        shop_logs.sort(key=lambda x: x.get('created_at', datetime.now()), reverse=True)
+        
+        # Simple pagination
+        start = (page - 1) * per_page
+        end = start + per_page
+        paginated_logs = shop_logs[start:end]
+        
+        # Mock pagination object
+        class MockPagination:
+            def __init__(self, items, page, per_page, total):
+                self.items = items
+                self.page = page
+                self.per_page = per_page
+                self.total = total
+                self.pages = (total + per_page - 1) // per_page
+                self.has_prev = page > 1
+                self.has_next = page < self.pages
+                self.prev_num = page - 1 if self.has_prev else None
+                self.next_num = page + 1 if self.has_next else None
+        
+        logs = MockPagination(paginated_logs, page, per_page, len(shop_logs))
         
         return render_template('api_logs.html', shop=shop, logs=logs)
         
