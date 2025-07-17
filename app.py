@@ -14,7 +14,6 @@ REDIRECT_URL = 'https://alvinnovedra2.pythonanywhere.com/callback'
 CALLBACK_PATH = '/callback'
 AUTH_BASE_URL = 'https://partner.test-stable.shopeemobile.com/api/v2/shop/auth_partner'
 
-
 def generate_auth_url():
     timestamp = int(time.time())
     path = "/api/v2/shop/auth_partner"
@@ -29,12 +28,10 @@ def generate_auth_url():
         'partner_id': PARTNER_ID,
         'timestamp': timestamp,
         'sign': sign,
-        'redirect': REDIRECT_URL  # tetap dimasukkan ke query, tapi tidak dipakai dalam base_string
+        'redirect': REDIRECT_URL
     }
     url = f"{AUTH_BASE_URL}?{urllib.parse.urlencode(query)}"
     return url
-
-
 
 @app.route('/')
 def index():
@@ -51,12 +48,10 @@ def index():
         </html>
     ''', shop_name=session.get('shop_name'))
 
-
 @app.route('/login')
 def login():
     auth_url = generate_auth_url()
     return redirect(auth_url)
-
 
 @app.route(CALLBACK_PATH)
 def callback():
@@ -114,7 +109,6 @@ def callback():
         return redirect('/')
     else:
         return f"Gagal mendapatkan access token: {token_data}"
-
 
 if __name__ == '__main__':
     app.run(debug=True)
