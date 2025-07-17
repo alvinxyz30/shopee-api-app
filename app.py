@@ -5,7 +5,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
 PARTNER_ID = 1175215
-PARTNER_KEY = 'shpk455a5a728a2-xxxxxxxxxxxxxxxxxxxxxxxxxxxx'  # ganti dengan key asli kamu
+PARTNER_KEY = 'shpk6359494e627473757766626a516a494e79634950757676496c62656f6c4d'  # ganti dengan key asli kamu
 API_BASE_URL = 'https://partner.test-stable.shopeemobile.com/api/v2'
 REDIRECT_URL = 'https://alvinnovendra2.pythonanywhere.com/callback'
 
