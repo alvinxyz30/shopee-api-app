@@ -44,6 +44,8 @@ def login():
     url = f"{API_BASE_URL}{path}?partner_id={PARTNER_ID}&timestamp={timestamp}&sign={sign}&redirect={REDIRECT_URL}"
     return redirect(url)
 
+
+
 @app.route('/callback')
 def callback():
     code = request.args.get('code')
@@ -51,7 +53,7 @@ def callback():
     timestamp = int(time.time())
     path = '/auth/token/get'
     sign = gen_signature(path, timestamp)
-    
+
     payload = {
         'code': code,
         'shop_id': int(shop_id),
@@ -60,10 +62,26 @@ def callback():
         'timestamp': timestamp
     }
 
-    res = requests.post(API_BASE_URL + path, json=payload).json()
+    try:
+        print(f"[Shopee CALLBACK] Payload: {payload}")
+        response = requests.post(API_BASE_URL + path, json=payload)
+        print(f"[Shopee CALLBACK] Status Code: {response.status_code}")
+        res = response.json()
+        print(f"[Shopee CALLBACK] Response JSON: {res}")
+    except Exception as e:
+        print(f"[Shopee CALLBACK ERROR] Exception saat request: {e}")
+        return "Error saat memanggil Shopee API"
+
+    if 'access_token' not in res:
+        print(f"[Shopee CALLBACK ERROR] access_token tidak ditemukan: {res}")
+        return "Gagal ambil token dari Shopee: " + str(res)
+
     session['access_token'] = res['access_token']
     session['shop_id'] = shop_id
+    print(f"[Shopee CALLBACK] Berhasil login. Token: {res['access_token']}")
     return redirect('/')
+
+
 
 @app.route('/get_sales', methods=['POST'])
 def get_sales():
