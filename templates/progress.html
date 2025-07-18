@@ -180,21 +180,47 @@
             });
         }
         
+        let currentPollInterval = null;
+        let isRetrying = false;
+        let retryCount = 0;
+        
         function startProgressPolling() {
             console.log('=== STARTING PROGRESS POLLING ===');
-            const pollInterval = setInterval(() => {
+            currentPollInterval = setInterval(() => {
                 console.log('Polling for progress...');
                 fetch('/api/progress_status')
                 .then(response => {
                     console.log('Progress response:', response);
+                    
+                    // Handle 502 Bad Gateway
+                    if (response.status === 502) {
+                        console.log('502 Bad Gateway detected, starting auto-retry...');
+                        handleServerDown();
+                        return;
+                    }
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
                     return response.json();
                 })
                 .then(data => {
+                    if (!data) return; // Skip if no data (502 case)
+                    
                     console.log('Progress update received:', data);
+                    
+                    // Reset retry count on successful response
+                    if (isRetrying) {
+                        console.log('Server recovered! Resuming normal polling...');
+                        isRetrying = false;
+                        retryCount = 0;
+                        updateServerStatus('', false);
+                    }
                     
                     if (data.error) {
                         console.error('Progress error:', data.error);
-                        clearInterval(pollInterval);
+                        clearInterval(currentPollInterval);
                         return;
                     }
                     
@@ -227,7 +253,7 @@
                     // Stop polling if completed or error
                     if (data.status === 'completed' || data.status === 'error') {
                         console.log('Process finished, clearing interval');
-                        clearInterval(pollInterval);
+                        clearInterval(currentPollInterval);
                         isProcessing = false;
                         
                         // Update UI to final state
@@ -245,9 +271,79 @@
                 })
                 .catch(error => {
                     console.error('Polling error:', error);
-                    // Don't clear interval on network errors, keep trying
+                    // Check if it's a network error that might be 502
+                    if (error.message.includes('502') || error.message.includes('Bad Gateway')) {
+                        handleServerDown();
+                    }
                 });
-            }, 1000); // Poll every 1 second (faster)
+            }, 1000); // Poll every 1 second
+        }
+        
+        function handleServerDown() {
+            if (isRetrying) return; // Already retrying
+            
+            console.log('Server appears to be down, starting auto-retry mechanism...');
+            isRetrying = true;
+            
+            // Stop current polling
+            clearInterval(currentPollInterval);
+            
+            // Update UI to show server down status
+            updateServerStatus('🔄 Server sedang recovery, mencoba reconnect otomatis...', true);
+            
+            // Start retry mechanism
+            startAutoRetry();
+        }
+        
+        function startAutoRetry() {
+            retryCount++;
+            // Exponential backoff: 5s, 10s, 20s, 40s, max 60s
+            const waitTime = Math.min(5 * Math.pow(2, retryCount - 1), 60);
+            
+            console.log(`Attempt ${retryCount}: Retrying in ${waitTime} seconds...`);
+            updateServerStatus(`🔄 Server recovery... Percobaan ke-${retryCount}, retry dalam ${waitTime} detik`, true);
+            
+            setTimeout(() => {
+                console.log(`Testing server connectivity (attempt ${retryCount})...`);
+                updateServerStatus(`🔄 Testing server connection... (Percobaan ke-${retryCount})`, true);
+                
+                fetch('/api/progress_status')
+                    .then(response => {
+                        if (response.ok) {
+                            console.log('Server is back online! Resuming normal polling...');
+                            updateServerStatus('✅ Server kembali online! Melanjutkan proses...', false);
+                            isRetrying = false;
+                            retryCount = 0;
+                            
+                            // Resume normal polling after a brief delay
+                            setTimeout(() => {
+                                startProgressPolling();
+                            }, 1000);
+                        } else {
+                            console.log('Server still down, retrying...');
+                            startAutoRetry();
+                        }
+                    })
+                    .catch(error => {
+                        console.log('Server still down, retrying...', error);
+                        startAutoRetry();
+                    });
+            }, waitTime * 1000);
+        }
+        
+        function updateServerStatus(message, isRetrying) {
+            const statusText = document.getElementById('statusText');
+            if (isRetrying) {
+                statusText.innerHTML = '<div class="spinner-border spinner-border-sm text-warning" role="status"></div> ' + message;
+                statusText.className = 'status-text text-center text-warning';
+            } else if (message) {
+                statusText.innerHTML = '<span class="text-success">✅</span> ' + message;
+                statusText.className = 'status-text text-center text-success';
+                // Reset to normal after 3 seconds
+                setTimeout(() => {
+                    statusText.className = 'status-text text-center';
+                }, 3000);
+            }
         }
         
         // Auto-start if status is processing (page refresh case)

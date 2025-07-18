@@ -414,8 +414,8 @@ def start_chunked_export():
         session.modified = True
         return {"error": str(e)}
 
-def get_date_chunks(start_date_str, end_date_str, chunk_days=7):
-    """Pecah date range jadi chunks maksimal 7 hari (dikurangi dari 15 hari)"""
+def get_date_chunks(start_date_str, end_date_str, chunk_days=3):
+    """Pecah date range jadi chunks maksimal 3 hari (dikurangi dari 7 hari)"""
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
     end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
     
@@ -495,8 +495,8 @@ def process_returns_chunked_global(export_id, access_token):
     app.logger.info(f"Checkpoint: start_chunk={start_chunk_index}, start_page={start_page_no}")
     app.logger.info(f"Date range: {export_data['date_from']} to {export_data['date_to']}")
     
-    # Pecah date range jadi chunks 7 hari (dikurangi dari 15 hari)
-    date_chunks = get_date_chunks(export_data['date_from'], export_data['date_to'], 7)
+    # Pecah date range jadi chunks 3 hari (dikurangi dari 7 hari)
+    date_chunks = get_date_chunks(export_data['date_from'], export_data['date_to'], 3)
     print(f"=== DATE CHUNKING ===")
     print(f"Total chunks: {len(date_chunks)}")
     for i, (start, end) in enumerate(date_chunks):
@@ -552,7 +552,7 @@ def process_returns_chunked_global(export_id, access_token):
             # API call dengan date filter
             return_body = {
                 "page_no": page_no, 
-                "page_size": 2,  # Small batch size for stability
+                "page_size": 1,  # Minimal batch size for maximum stability
                 "create_time_from": int(chunk_start.timestamp()),
                 "create_time_to": int(chunk_end.timestamp())
             }
@@ -595,9 +595,9 @@ def process_returns_chunked_global(export_id, access_token):
             time.sleep(0.15)  # Respect rate limit
             page_no += 1
             
-            # Safety limit per chunk
-            if page_no > 200:  # Reduced safety limit
-                app.logger.info(f"Reached safety limit of 200 pages in chunk {chunk_index + 1}")
+            # Safety limit per chunk (adjusted for page_size=1)
+            if page_no > 400:  # Increased limit since page_size=1 (same total: 400*1=400 records)
+                app.logger.info(f"Reached safety limit of 400 pages in chunk {chunk_index + 1}")
                 print(f"Safety limit reached in chunk {chunk_index + 1}")
                 break
         
