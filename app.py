@@ -414,8 +414,8 @@ def start_chunked_export():
         session.modified = True
         return {"error": str(e)}
 
-def get_date_chunks(start_date_str, end_date_str, chunk_days=15):
-    """Pecah date range jadi chunks maksimal 15 hari"""
+def get_date_chunks(start_date_str, end_date_str, chunk_days=7):
+    """Pecah date range jadi chunks maksimal 7 hari (dikurangi dari 15 hari)"""
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
     end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
     
@@ -428,8 +428,53 @@ def get_date_chunks(start_date_str, end_date_str, chunk_days=15):
     
     return chunks
 
+def save_checkpoint(export_id, checkpoint_data):
+    """Simpan checkpoint ke global store"""
+    if export_id in export_progress_store:
+        export_progress_store[export_id]['checkpoint'] = checkpoint_data
+        app.logger.info(f"Checkpoint saved for export {export_id}: {checkpoint_data}")
+
+def load_checkpoint(export_id):
+    """Load checkpoint dari global store"""
+    if export_id in export_progress_store:
+        return export_progress_store[export_id].get('checkpoint', {})
+    return {}
+
+def process_chunk_data(chunk_returns, data_type='returns'):
+    """Process data chunk dan return format Excel, lalu clear memory"""
+    if not chunk_returns:
+        return []
+    
+    processed_items = []
+    
+    for item in chunk_returns:
+        if data_type == 'returns':
+            processed_item = {
+                "Nomor Pesanan": item.get('order_sn'),
+                "Nomor Retur": item.get('return_sn'),
+                "Status": item.get('status'),
+                "Alasan": item.get('reason'),
+                "Tanggal Dibuat": datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('create_time') else None,
+                "Metode Pembayaran": item.get('payment_method'),
+                "Resi Pengembalian": item.get('logistics', {}).get('tracking_number') if item.get('logistics') else None,
+                "Total Pengembalian Dana": item.get('refund_amount'),
+                "Alasan Teks dari Pembeli": item.get('text_reason'),
+                "User ID": item.get('user_id'),
+                "Tanggal Update": datetime.fromtimestamp(item.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('update_time') else None
+            }
+        else:
+            # Default processing for other data types
+            processed_item = item
+        
+        processed_items.append(processed_item)
+    
+    # Clear input data from memory
+    del chunk_returns
+    
+    return processed_items
+
 def process_returns_chunked_global(export_id, access_token):
-    """Process returns data in small chunks using global store."""
+    """Process returns data with checkpoint system and memory management."""
     app.logger.info("=== STARTING process_returns_chunked_global ===")
     
     if export_id not in export_progress_store:
@@ -438,15 +483,20 @@ def process_returns_chunked_global(export_id, access_token):
     export_data = export_progress_store[export_id]
     export_data['status'] = 'processing'
     export_data['current_step'] = 'Mempersiapkan chunks tanggal...'
-    export_data['progress'] = 5.0  # Start with 5%
+    export_data['progress'] = 5.0
+    
+    # Load checkpoint if exists
+    checkpoint = load_checkpoint(export_id)
+    start_chunk_index = checkpoint.get('chunk_index', 0)
+    start_page_no = checkpoint.get('page_no', 1)
     
     app.logger.info(f"Initial progress set to: {export_data['progress']}")
     app.logger.info(f"Shop ID: {export_data['shop_id']}")
-    app.logger.info(f"Access token length: {len(access_token) if access_token else 'None'}")
+    app.logger.info(f"Checkpoint: start_chunk={start_chunk_index}, start_page={start_page_no}")
     app.logger.info(f"Date range: {export_data['date_from']} to {export_data['date_to']}")
     
-    # Pecah date range jadi chunks 15 hari
-    date_chunks = get_date_chunks(export_data['date_from'], export_data['date_to'], 15)
+    # Pecah date range jadi chunks 7 hari (dikurangi dari 15 hari)
+    date_chunks = get_date_chunks(export_data['date_from'], export_data['date_to'], 7)
     print(f"=== DATE CHUNKING ===")
     print(f"Total chunks: {len(date_chunks)}")
     for i, (start, end) in enumerate(date_chunks):
@@ -454,33 +504,47 @@ def process_returns_chunked_global(export_id, access_token):
     app.logger.info(f"Created {len(date_chunks)} date chunks")
     
     shop_id = export_data['shop_id']
-    all_returns = []
+    all_processed_data = []  # Store processed data instead of raw data
     total_processed = 0
     
     # Loop untuk setiap chunk tanggal
     for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
+        # Skip chunks that already processed (resume from checkpoint)
+        if chunk_index < start_chunk_index:
+            continue
+            
         print(f"=== PROCESSING CHUNK {chunk_index + 1}/{len(date_chunks)} ===")
         print(f"Date range: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
         app.logger.info(f"Processing chunk {chunk_index + 1}/{len(date_chunks)}: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
         
         # Update progress untuk chunk
-        chunk_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0  # 75% untuk semua chunks
+        chunk_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0
         export_data['progress'] = round(chunk_progress, 1)
         export_data['current_step'] = f'Memproses chunk {chunk_index + 1}/{len(date_chunks)} ({chunk_start.strftime("%Y-%m-%d")} to {chunk_end.strftime("%Y-%m-%d")})'
         
-        # Reset pagination untuk chunk ini
-        page_no = 1
+        # Reset pagination untuk chunk ini atau resume dari checkpoint
+        page_no = start_page_no if chunk_index == start_chunk_index else 1
         max_pages_estimate = 50
+        chunk_returns = []  # Store returns for current chunk only
         
         # Loop pagination untuk chunk ini
         while True:
             app.logger.info(f"=== CHUNK {chunk_index + 1} PAGE {page_no} ===")
             
             # Update progress dalam chunk
-            page_progress = (page_no / max_pages_estimate) * (75.0 / len(date_chunks))  # Progress dalam chunk
+            page_progress = (page_no / max_pages_estimate) * (75.0 / len(date_chunks))
             current_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0 + page_progress
             export_data['progress'] = round(min(85.0, current_progress), 1)
             export_data['current_step'] = f'Chunk {chunk_index + 1}/{len(date_chunks)} - Halaman {page_no}...'
+            
+            # Save checkpoint every 25 pages
+            if page_no % 25 == 0:
+                checkpoint_data = {
+                    'chunk_index': chunk_index,
+                    'page_no': page_no,
+                    'total_processed': total_processed
+                }
+                save_checkpoint(export_id, checkpoint_data)
             
             app.logger.info(f"Progress updated to: {export_data['progress']}")
             app.logger.info(f"Calling API for chunk {chunk_index + 1} page {page_no}...")
@@ -488,7 +552,7 @@ def process_returns_chunked_global(export_id, access_token):
             # API call dengan date filter
             return_body = {
                 "page_no": page_no, 
-                "page_size": 2,  # Reduced batch size to prevent 502 errors
+                "page_size": 2,  # Small batch size for stability
                 "create_time_from": int(chunk_start.timestamp()),
                 "create_time_to": int(chunk_end.timestamp())
             }
@@ -501,6 +565,13 @@ def process_returns_chunked_global(export_id, access_token):
             
             if error:
                 app.logger.error(f"Returns API error: {error}")
+                # Save checkpoint before error
+                save_checkpoint(export_id, {
+                    'chunk_index': chunk_index,
+                    'page_no': page_no,
+                    'total_processed': total_processed,
+                    'error': True
+                })
                 export_data['error'] = f"Gagal mengambil daftar retur: {error}"
                 export_data['status'] = 'error'
                 return
@@ -509,91 +580,69 @@ def process_returns_chunked_global(export_id, access_token):
             return_list = response.get('response', {}).get('return', [])
             app.logger.info(f"Found {len(return_list)} returns on chunk {chunk_index + 1} page {page_no}")
             
-            # Log sample data for debugging
-            if return_list:
-                sample_return = return_list[0]
-                print(f"=== CHUNK {chunk_index + 1} PAGE {page_no} SAMPLE DATA ===")
-                print(f"Return SN: {sample_return.get('return_sn')}")
-                print(f"Order SN: {sample_return.get('order_sn')}")
-                print(f"Status: {sample_return.get('status')}")
-                print(f"Create Time: {datetime.fromtimestamp(sample_return.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if sample_return.get('create_time') else 'None'}")
-                print(f"Refund Amount: {sample_return.get('refund_amount')}")
-                print(f"====================")
-                
-            # Log all return_sn for tracking
-            return_sns = [ret.get('return_sn') for ret in return_list]
-            app.logger.info(f"Chunk {chunk_index + 1} page {page_no} return_sn list: {return_sns}")
-            print(f"Chunk {chunk_index + 1} page {page_no} return_sn: {return_sns}")
-            
             if not return_list:
                 app.logger.info(f"No more returns found in chunk {chunk_index + 1}, breaking pagination loop")
                 print(f"No more data in chunk {chunk_index + 1}, moving to next chunk")
                 break
                 
-            all_returns.extend(return_list)
+            chunk_returns.extend(return_list)
             total_processed += len(return_list)
             
             app.logger.info(f"Chunk {chunk_index + 1} progress: {current_progress:.1f}%, total processed: {total_processed}")
             print(f"Total processed so far: {total_processed}")
             
-            # Add delay to respect rate limit (10 requests/second = 0.1 second minimum)
-            # Using 0.15 seconds for safety margin
-            time.sleep(0.15)  # Respect 10 requests/second rate limit
+            # Add delay to respect rate limit
+            time.sleep(0.15)  # Respect rate limit
             page_no += 1
             
             # Safety limit per chunk
-            if page_no > 500:  # Max 1000 records per chunk (500 * 2)
-                app.logger.info(f"Reached safety limit of 500 pages in chunk {chunk_index + 1}")
+            if page_no > 200:  # Reduced safety limit
+                app.logger.info(f"Reached safety limit of 200 pages in chunk {chunk_index + 1}")
                 print(f"Safety limit reached in chunk {chunk_index + 1}")
                 break
         
+        # Process chunk data and clear memory
+        if chunk_returns:
+            processed_chunk_data = process_chunk_data(chunk_returns, 'returns')
+            all_processed_data.extend(processed_chunk_data)
+            app.logger.info(f"Processed {len(processed_chunk_data)} items from chunk {chunk_index + 1}")
+            print(f"Processed {len(processed_chunk_data)} items from chunk {chunk_index + 1}")
+            
+            # Clear chunk data from memory
+            del chunk_returns
+            del processed_chunk_data
+        
         print(f"=== CHUNK {chunk_index + 1} COMPLETED ===")
-        print(f"Total returns from chunk {chunk_index + 1}: {len([r for r in all_returns[-total_processed:]])}")
         app.logger.info(f"Chunk {chunk_index + 1} completed")
+        
+        # Reset start_page_no for next chunk
+        start_page_no = 1
     
-    # Process the collected data
-    export_data['current_step'] = 'Memproses data untuk Excel...'
+    # Finalize export
+    export_data['current_step'] = 'Menyelesaikan export...'
     export_data['progress'] = 95.0
     
-    if all_returns:
-        processed_returns = []
-        print(f"=== PROCESSING {len(all_returns)} RETURNS ===")
-        app.logger.info(f"Processing {len(all_returns)} total returns")
-        
-        for i, ret in enumerate(all_returns):
-            processed_item = {
-                "Nomor Pesanan": ret.get('order_sn'),
-                "Nomor Retur": ret.get('return_sn'),
-                "Status": ret.get('status'),
-                "Alasan": ret.get('reason'),
-                "Tanggal Dibuat": datetime.fromtimestamp(ret.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('create_time') else None,
-                "Metode Pembayaran": ret.get('payment_method'),
-                "Resi Pengembalian": ret.get('logistics', {}).get('tracking_number') if ret.get('logistics') else None,
-                "Total Pengembalian Dana": ret.get('refund_amount'),
-                "Alasan Teks dari Pembeli": ret.get('text_reason'),
-                "User ID": ret.get('user_id'),
-                "Tanggal Update": datetime.fromtimestamp(ret.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('update_time') else None
-            }
-            processed_returns.append(processed_item)
-            
-            # Log every 10th item or first/last items
-            if i % 10 == 0 or i == 0 or i == len(all_returns) - 1:
-                print(f"Processed item {i+1}: {processed_item['Nomor Retur']}")
-                app.logger.info(f"Processed item {i+1}: {processed_item}")
-        
-        export_data['data'] = processed_returns
+    if all_processed_data:
+        export_data['data'] = all_processed_data
         export_data['status'] = 'completed'
         export_data['progress'] = 100.0
-        export_data['current_step'] = f'Selesai! {len(processed_returns)} retur berhasil diproses'
+        export_data['current_step'] = f'Selesai! {len(all_processed_data)} retur berhasil diproses'
         
         print(f"=== EXPORT COMPLETED ===")
-        print(f"Total records processed: {len(processed_returns)}")
-        app.logger.info(f"Export completed with {len(processed_returns)} records")
+        print(f"Total records processed: {len(all_processed_data)}")
+        app.logger.info(f"Export completed with {len(all_processed_data)} records")
+        
+        # Clear checkpoint after successful completion
+        if export_id in export_progress_store:
+            export_progress_store[export_id].pop('checkpoint', None)
     else:
         export_data['status'] = 'completed'
         export_data['progress'] = 100.0
         export_data['current_step'] = 'Tidak ada data retur ditemukan'
         export_data['data'] = []
+    
+    # Clear processed data from memory
+    del all_processed_data
 
 def process_orders_chunked_global(export_id, access_token):
     """Process orders data in small chunks using global store."""
