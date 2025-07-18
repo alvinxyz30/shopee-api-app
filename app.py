@@ -440,6 +440,21 @@ def process_returns_chunked_global(export_id, access_token):
         return_list = response.get('response', {}).get('return', [])
         app.logger.info(f"Found {len(return_list)} returns on page {page_no}")
         
+        # Log sample data for debugging
+        if return_list:
+            app.logger.info(f"Sample return data: {return_list[0]}")
+            print(f"=== PAGE {page_no} SAMPLE DATA ===")
+            print(f"Return SN: {return_list[0].get('return_sn')}")
+            print(f"Order SN: {return_list[0].get('order_sn')}")
+            print(f"Status: {return_list[0].get('status')}")
+            print(f"Refund Amount: {return_list[0].get('refund_amount')}")
+            print(f"====================")
+            
+        # Log all return_sn for tracking
+        return_sns = [ret.get('return_sn') for ret in return_list]
+        app.logger.info(f"Page {page_no} return_sn list: {return_sns}")
+        print(f"Page {page_no} return_sn list: {return_sns}")
+        
         if not return_list:
             app.logger.info("No more returns found, breaking loop")
             break
@@ -469,7 +484,10 @@ def process_returns_chunked_global(export_id, access_token):
     
     if all_returns:
         processed_returns = []
-        for ret in all_returns:
+        print(f"=== PROCESSING {len(all_returns)} RETURNS ===")
+        app.logger.info(f"Processing {len(all_returns)} total returns")
+        
+        for i, ret in enumerate(all_returns):
             processed_item = {
                 "Nomor Pesanan": ret.get('order_sn'),
                 "Nomor Retur": ret.get('return_sn'),
@@ -484,11 +502,20 @@ def process_returns_chunked_global(export_id, access_token):
                 "Tanggal Update": datetime.fromtimestamp(ret.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('update_time') else None
             }
             processed_returns.append(processed_item)
+            
+            # Log every 10th item or first/last items
+            if i % 10 == 0 or i == 0 or i == len(all_returns) - 1:
+                print(f"Processed item {i+1}: {processed_item['Nomor Retur']}")
+                app.logger.info(f"Processed item {i+1}: {processed_item}")
         
         export_data['data'] = processed_returns
         export_data['status'] = 'completed'
         export_data['progress'] = 100.0
         export_data['current_step'] = f'Selesai! {len(processed_returns)} retur berhasil diproses'
+        
+        print(f"=== EXPORT COMPLETED ===")
+        print(f"Total records processed: {len(processed_returns)}")
+        app.logger.info(f"Export completed with {len(processed_returns)} records")
     else:
         export_data['status'] = 'completed'
         export_data['progress'] = 100.0

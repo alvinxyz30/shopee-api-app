@@ -214,12 +214,9 @@
                     } else if (data.status === 'completed') {
                         statusHTML = '<span class="completed-icon">✅</span> ' + data.current_step;
                         console.log('Status: completed -', data.current_step);
-                        clearInterval(pollInterval);
-                        setTimeout(() => location.reload(), 2000);
                     } else if (data.status === 'error') {
                         statusHTML = '<span class="error-icon">❌</span> Error: ' + data.error;
                         console.log('Status: error -', data.error);
-                        clearInterval(pollInterval);
                     } else {
                         statusHTML = data.current_step;
                         console.log('Status: unknown -', data.status, data.current_step);
@@ -227,11 +224,16 @@
                     
                     statusText.innerHTML = statusHTML;
                     
-                    // Auto-reload if completed or error
+                    // Stop polling if completed or error
                     if (data.status === 'completed' || data.status === 'error') {
-                        console.log('Process finished, clearing interval and reloading in 3 seconds');
+                        console.log('Process finished, clearing interval');
                         clearInterval(pollInterval);
-                        setTimeout(() => location.reload(), 3000);
+                        isProcessing = false;
+                        
+                        // Update UI to final state
+                        if (data.status === 'completed') {
+                            setTimeout(() => location.reload(), 2000);
+                        }
                     }
                 })
                 .catch(error => {
