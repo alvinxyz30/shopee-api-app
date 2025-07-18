@@ -54,8 +54,8 @@ def generate_signature(path, timestamp, access_token=None, shop_id=None):
     base_string = "".join(base_string_parts)
     return hmac.new(PARTNER_KEY.encode('utf-8'), base_string.encode('utf-8'), hashlib.sha256).hexdigest()
 
-def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=None):
-    """Fungsi generik untuk memanggil semua endpoint Shopee API v2."""
+def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=None, max_retries=3):
+    """Fungsi generik untuk memanggil semua endpoint Shopee API v2 dengan rate limiting dan retry."""
     timestamp = int(time.time())
     
     if not all([PARTNER_ID, PARTNER_KEY not in ["", "GANTI_DENGAN_PARTNER_KEY_ANDA"]]):
@@ -74,29 +74,48 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
     full_url = f"{BASE_URL}{path}"
     headers = {'Content-Type': 'application/json'}
 
-    try:
-        if method.upper() == 'POST':
-            response = requests.post(full_url, params=params, json=body, headers=headers, timeout=30)
-        else:
-            response = requests.get(full_url, params={**params, **(body or {})}, headers=headers, timeout=30)
-        
-        response.raise_for_status()
-        response_data = response.json()
-        
-        if response_data.get("error"):
-            error_msg = f"Shopee API Error: {response_data.get('message', 'Unknown error')} (Req ID: {response_data.get('request_id')})"
+    # Retry mechanism with exponential backoff
+    for attempt in range(max_retries):
+        try:
+            if method.upper() == 'POST':
+                response = requests.post(full_url, params=params, json=body, headers=headers, timeout=30)
+            else:
+                response = requests.get(full_url, params={**params, **(body or {})}, headers=headers, timeout=30)
+            
+            # Handle HTTP 429 Too Many Requests
+            if response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 2 ** attempt))
+                app.logger.warning(f"Rate limit exceeded. Retrying after {retry_after} seconds. Attempt {attempt + 1}/{max_retries}")
+                time.sleep(retry_after)
+                continue
+            
+            response.raise_for_status()
+            response_data = response.json()
+            
+            if response_data.get("error"):
+                error_msg = f"Shopee API Error: {response_data.get('message', 'Unknown error')} (Req ID: {response_data.get('request_id')})"
+                app.logger.error(error_msg)
+                return None, error_msg
+                
+            return response_data, None
+            
+        except requests.exceptions.RequestException as e:
+            if attempt == max_retries - 1:  # Last attempt
+                error_msg = f"Kesalahan Jaringan: {e}"
+                app.logger.error(error_msg)
+                return None, error_msg
+            else:
+                # Exponential backoff: 1s, 2s, 4s
+                backoff_time = 2 ** attempt
+                app.logger.warning(f"Request failed, retrying in {backoff_time} seconds. Attempt {attempt + 1}/{max_retries}")
+                time.sleep(backoff_time)
+                continue
+        except Exception as e:
+            error_msg = f"Terjadi kesalahan tak terduga: {e}"
             app.logger.error(error_msg)
             return None, error_msg
-            
-        return response_data, None
-    except requests.exceptions.RequestException as e:
-        error_msg = f"Kesalahan Jaringan: {e}"
-        app.logger.error(error_msg)
-        return None, error_msg
-    except Exception as e:
-        error_msg = f"Terjadi kesalahan tak terduga: {e}"
-        app.logger.error(error_msg)
-        return None, error_msg
+    
+    return None, "Max retries exceeded"
 
 # ==============================================================================
 # RUTE-RUTE (HALAMAN) APLIKASI
@@ -517,8 +536,9 @@ def process_returns_chunked_global(export_id, access_token):
             app.logger.info(f"Chunk {chunk_index + 1} progress: {current_progress:.1f}%, total processed: {total_processed}")
             print(f"Total processed so far: {total_processed}")
             
-            # Add delay to prevent rate limiting
-            time.sleep(3)  # Increased delay to 3 seconds
+            # Add delay to respect rate limit (10 requests/second = 0.1 second minimum)
+            # Using 0.15 seconds for safety margin
+            time.sleep(0.15)  # Respect 10 requests/second rate limit
             page_no += 1
             
             # Safety limit per chunk
