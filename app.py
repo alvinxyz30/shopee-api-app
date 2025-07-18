@@ -442,7 +442,36 @@ def load_checkpoint(export_id):
         return export_progress_store[export_id].get('checkpoint', {})
     return {}
 
-def process_chunk_data(chunk_returns, data_type='returns'):
+def get_payment_method_from_order(order_sn, shop_id, access_token):
+    """Lookup payment method dari orders API menggunakan order_sn"""
+    try:
+        # Call orders API untuk mendapatkan payment method
+        order_body = {
+            "order_sn_list": [order_sn],
+            "response_optional_fields": ["payment_method"]
+        }
+        
+        response, error = call_shopee_api("/api/v2/order/get_order_detail", method='POST', 
+                                        shop_id=shop_id, access_token=access_token, body=order_body)
+        
+        if error:
+            app.logger.warning(f"Failed to get payment method for order {order_sn}: {error}")
+            return None
+            
+        order_list = response.get('response', {}).get('order_list', [])
+        if order_list and len(order_list) > 0:
+            payment_method = order_list[0].get('payment_method')
+            app.logger.info(f"Payment method for order {order_sn}: {payment_method}")
+            return payment_method
+        else:
+            app.logger.warning(f"No order found for order_sn: {order_sn}")
+            return None
+            
+    except Exception as e:
+        app.logger.error(f"Exception getting payment method for order {order_sn}: {e}")
+        return None
+
+def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_token=None):
     """Process data chunk dan return format Excel, lalu clear memory"""
     if not chunk_returns:
         return []
@@ -451,6 +480,14 @@ def process_chunk_data(chunk_returns, data_type='returns'):
     
     for item in chunk_returns:
         if data_type == 'returns':
+            # Lookup payment method dari orders API
+            order_sn = item.get('order_sn')
+            payment_method = None
+            if order_sn and shop_id and access_token:
+                payment_method = get_payment_method_from_order(order_sn, shop_id, access_token)
+                # Add small delay to respect rate limiting
+                time.sleep(0.1)
+            
             processed_item = {
                 "Nomor Pesanan": item.get('order_sn'),
                 "Nomor Retur": item.get('return_sn'),
@@ -458,6 +495,7 @@ def process_chunk_data(chunk_returns, data_type='returns'):
                 "Alasan": item.get('reason'),
                 "Tanggal Dibuat": datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('create_time') else None,
                 "Mata Uang": item.get('currency'),
+                "Metode Pembayaran": payment_method,  # Added: From orders API lookup
                 "Resi Pengembalian": item.get('tracking_number'),  # Fixed: Direct field access
                 "Total Pengembalian Dana": item.get('refund_amount'),
                 "Alasan Teks dari Pembeli": item.get('text_reason'),
@@ -609,7 +647,7 @@ def process_returns_chunked_global(export_id, access_token):
         
         # Process chunk data and clear memory
         if chunk_returns:
-            processed_chunk_data = process_chunk_data(chunk_returns, 'returns')
+            processed_chunk_data = process_chunk_data(chunk_returns, 'returns', shop_id, access_token)
             all_processed_data.extend(processed_chunk_data)
             app.logger.info(f"Processed {len(processed_chunk_data)} items from chunk {chunk_index + 1}")
             print(f"Processed {len(processed_chunk_data)} items from chunk {chunk_index + 1}")
