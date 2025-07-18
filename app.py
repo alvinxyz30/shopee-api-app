@@ -217,7 +217,10 @@ def export_data():
                 if error:
                     raise Exception(f"Gagal mengambil daftar pesanan: {error}")
                 
+                # Debug: Log API response
+                app.logger.info(f"Order list API response: {response}")
                 order_list = response.get('response', {}).get('order_list', [])
+                app.logger.info(f"Found {len(order_list)} orders in this batch")
                 for order in order_list:
                     all_order_sn_list.append(order['order_sn'])
                 
@@ -230,14 +233,19 @@ def export_data():
                 for i in range(0, len(all_order_sn_list), 50):
                     batch = all_order_sn_list[i:i+50]
                     detail_body = {"order_sn_list": batch}
-                    response, error = call_shopee_api("/api/v2/order/get_order_detail", shop_id=shop_id, access_token=access_token, body=detail_body)
+                    response, error = call_shopee_api("/api/v2/order/get_order_detail", method='POST', shop_id=shop_id, access_token=access_token, body=detail_body)
                     if error:
                         app.logger.error(f"Gagal mengambil detail untuk batch: {error}")
                         continue
                     detailed_orders.extend(response.get('response', {}).get('order_list', []))
             
+            app.logger.info(f"Total orders found: {len(all_order_sn_list)}, detailed orders: {len(detailed_orders)}")
             if detailed_orders:
                 df = pd.json_normalize(detailed_orders, sep='_')
+            elif all_order_sn_list:
+                # If we have order SNs but no details, create basic DataFrame
+                df = pd.DataFrame({'order_sn': all_order_sn_list})
+                app.logger.info("Using basic order list without details")
 
         elif data_type == 'products':
             all_items = []
