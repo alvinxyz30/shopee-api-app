@@ -11,6 +11,9 @@ from datetime import datetime, timedelta
 import pandas as pd
 import io
 
+# Global variable to store export progress (thread-safe alternative to session)
+export_progress_store = {}
+
 # ==============================================================================
 # KONFIGURASI WAJIB
 # Ganti nilai-nilai di bawah ini dengan data Anda.
@@ -237,9 +240,9 @@ def export_data():
         flash(f"Toko dengan ID {shop_id} tidak ditemukan di sesi ini.", 'danger')
         return redirect(url_for('dashboard'))
     
-    # Initialize progress tracking in session
+    # Initialize progress tracking in global store and session
     export_id = f"{shop_id}_{data_type}_{int(time.time())}"
-    session['current_export'] = {
+    export_data = {
         'export_id': export_id,
         'shop_id': shop_id,
         'data_type': data_type,
@@ -252,6 +255,10 @@ def export_data():
         'data': [],
         'error': None
     }
+    
+    # Store in both global store and session
+    export_progress_store[export_id] = export_data
+    session['current_export'] = export_data
     session.modified = True
     
     return redirect(url_for('export_progress'))
@@ -281,6 +288,12 @@ def progress_status():
     if not export_data:
         print("No export data found for progress status")
         return {"error": "No export process found"}, 404
+    
+    # Get updated data from global store
+    export_id = export_data.get('export_id')
+    if export_id and export_id in export_progress_store:
+        export_data = export_progress_store[export_id]
+        print(f"Using updated data from global store: {export_data}")
     
     response_data = {
         "status": export_data.get('status', 'unknown'),
@@ -338,20 +351,28 @@ def start_chunked_export():
         print(f"Starting async export for data_type: {export_data['data_type']}")
         app.logger.info(f"Starting async export for data_type: {export_data['data_type']}")
         
-        # Start processing in background thread
+        # Start processing in background thread using global store
         def background_process():
             try:
-                if export_data['data_type'] == 'returns':
-                    process_returns_chunked(export_data, access_token)
-                elif export_data['data_type'] == 'orders':
-                    process_orders_chunked(export_data, access_token)
-                elif export_data['data_type'] == 'products':
-                    process_products_chunked(export_data, access_token)
+                export_id = export_data.get('export_id')
+                if not export_id or export_id not in export_progress_store:
+                    return
+                
+                current_export = export_progress_store[export_id]
+                
+                if current_export['data_type'] == 'returns':
+                    process_returns_chunked_global(export_id, access_token)
+                elif current_export['data_type'] == 'orders':
+                    process_orders_chunked_global(export_id, access_token)
+                elif current_export['data_type'] == 'products':
+                    process_products_chunked_global(export_id, access_token)
             except Exception as e:
                 app.logger.error(f"Background process error: {e}")
-                export_data['error'] = str(e)
-                export_data['status'] = 'error'
-                session.modified = True
+                # Update global store with error
+                export_id = export_data.get('export_id')
+                if export_id and export_id in export_progress_store:
+                    export_progress_store[export_id]['error'] = str(e)
+                    export_progress_store[export_id]['status'] = 'error'
         
         # Start thread and return immediately
         thread = threading.Thread(target=background_process)
@@ -369,14 +390,17 @@ def start_chunked_export():
         session.modified = True
         return {"error": str(e)}
 
-def process_returns_chunked(export_data, access_token):
-    """Process returns data in small chunks."""
-    app.logger.info("=== STARTING process_returns_chunked ===")
+def process_returns_chunked_global(export_id, access_token):
+    """Process returns data in small chunks using global store."""
+    app.logger.info("=== STARTING process_returns_chunked_global ===")
     
+    if export_id not in export_progress_store:
+        return
+    
+    export_data = export_progress_store[export_id]
     export_data['status'] = 'processing'
     export_data['current_step'] = 'Mengambil daftar retur...'
     export_data['progress'] = 5.0  # Start with 5%
-    session.modified = True
     
     app.logger.info(f"Initial progress set to: {export_data['progress']}")
     app.logger.info(f"Shop ID: {export_data['shop_id']}")
@@ -395,7 +419,6 @@ def process_returns_chunked(export_data, access_token):
         current_progress = 5.0 + (page_no * 2.0)  # Faster progress increment
         export_data['progress'] = round(min(85.0, current_progress), 1)
         export_data['current_step'] = f'Mengambil halaman {page_no}...'
-        session.modified = True
         
         app.logger.info(f"Progress updated to: {export_data['progress']}")
         app.logger.info(f"Calling API for page {page_no}...")
@@ -410,7 +433,6 @@ def process_returns_chunked(export_data, access_token):
             app.logger.error(f"Returns API error: {error}")
             export_data['error'] = f"Gagal mengambil daftar retur: {error}"
             export_data['status'] = 'error'
-            session.modified = True
             return
             
         # Debug logging
@@ -429,7 +451,6 @@ def process_returns_chunked(export_data, access_token):
         progress_pct = 10.0 + min(75.0, (page_no / max_pages_estimate) * 75.0)
         export_data['progress'] = round(progress_pct, 1)  # 1 decimal place
         export_data['current_step'] = f'Memproses retur... {total_processed} data (halaman {page_no})'
-        session.modified = True
         
         app.logger.info(f"Progress updated: {progress_pct:.1f}%, total processed: {total_processed}")
         
@@ -445,7 +466,6 @@ def process_returns_chunked(export_data, access_token):
     # Process the collected data
     export_data['current_step'] = 'Memproses data untuk Excel...'
     export_data['progress'] = 95.0
-    session.modified = True
     
     if all_returns:
         processed_returns = []
@@ -474,26 +494,26 @@ def process_returns_chunked(export_data, access_token):
         export_data['progress'] = 100.0
         export_data['current_step'] = 'Tidak ada data retur ditemukan'
         export_data['data'] = []
-    
-    session.modified = True
 
-def process_orders_chunked(export_data, access_token):
-    """Process orders data in small chunks."""
-    # Similar implementation for orders
+def process_orders_chunked_global(export_id, access_token):
+    """Process orders data in small chunks using global store."""
+    if export_id not in export_progress_store:
+        return
+    export_data = export_progress_store[export_id]
     export_data['status'] = 'completed'  # Placeholder
     export_data['progress'] = 100
     export_data['current_step'] = 'Orders processing not implemented yet'
     export_data['data'] = []
-    session.modified = True
 
-def process_products_chunked(export_data, access_token):
-    """Process products data in small chunks.""" 
-    # Similar implementation for products
+def process_products_chunked_global(export_id, access_token):
+    """Process products data in small chunks using global store."""
+    if export_id not in export_progress_store:
+        return
+    export_data = export_progress_store[export_id]
     export_data['status'] = 'completed'  # Placeholder
     export_data['progress'] = 100
     export_data['current_step'] = 'Products processing not implemented yet'
     export_data['data'] = []
-    session.modified = True
 
 @app.route('/download_export')
 def download_export():
