@@ -232,7 +232,14 @@
                         
                         // Update UI to final state
                         if (data.status === 'completed') {
-                            setTimeout(() => location.reload(), 2000);
+                            // Show download button or completion message without reload
+                            if (data.data_count > 0) {
+                                const downloadBtn = '<a href="/download_export" class="btn btn-success btn-lg">📥 Download Excel (' + data.data_count + ' records)</a>';
+                                document.querySelector('.text-center.mt-4').innerHTML = downloadBtn + '<br><br><a href="/" class="btn btn-outline-secondary">← Kembali ke Dashboard</a>';
+                            } else {
+                                const backBtn = '<a href="/" class="btn btn-secondary btn-lg">🏠 Kembali ke Dashboard</a>';
+                                document.querySelector('.text-center.mt-4').innerHTML = backBtn;
+                            }
                         }
                     }
                 })
