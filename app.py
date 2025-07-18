@@ -213,7 +213,7 @@ def export_data():
             cursor = ""
             while True:
                 order_list_body = {"time_range_field": "create_time", "time_from": time_from, "time_to": time_to, "page_size": 100, "cursor": cursor}
-                response, error = call_shopee_api("/api/v2/order/get_order_list", shop_id=shop_id, access_token=access_token, body=order_list_body)
+                response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET', shop_id=shop_id, access_token=access_token, body=order_list_body)
                 if error:
                     raise Exception(f"Gagal mengambil daftar pesanan: {error}")
                 
