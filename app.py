@@ -293,7 +293,9 @@ def progress_status():
     export_id = export_data.get('export_id')
     if export_id and export_id in export_progress_store:
         export_data = export_progress_store[export_id]
-        print(f"Using updated data from global store: {export_data}")
+        # Safe print untuk data besar
+        data_count = len(export_data.get('data', []))
+        print(f"Using updated data from global store: Progress={export_data.get('progress')}%, Status={export_data.get('status')}, Records={data_count}")
     
     response_data = {
         "status": export_data.get('status', 'unknown'),
@@ -302,7 +304,7 @@ def progress_status():
         "error": export_data.get('error'),
         "data_count": len(export_data.get('data', []))
     }
-    print(f"Returning progress status: {response_data}")
+    print(f"Returning progress status: Progress={response_data['progress']}%, Status={response_data['status']}, Records={response_data['data_count']}")
     return response_data
 
 @app.route('/start_chunked_export', methods=['POST'])
@@ -390,6 +392,20 @@ def start_chunked_export():
         session.modified = True
         return {"error": str(e)}
 
+def get_date_chunks(start_date_str, end_date_str, chunk_days=15):
+    """Pecah date range jadi chunks maksimal 15 hari"""
+    start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+    end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+    
+    chunks = []
+    current = start_date
+    while current < end_date:
+        chunk_end = min(current + timedelta(days=chunk_days), end_date)
+        chunks.append((current, chunk_end))
+        current = chunk_end + timedelta(days=1)  # Next chunk starts next day
+    
+    return chunks
+
 def process_returns_chunked_global(export_id, access_token):
     """Process returns data in small chunks using global store."""
     app.logger.info("=== STARTING process_returns_chunked_global ===")
@@ -399,84 +415,118 @@ def process_returns_chunked_global(export_id, access_token):
     
     export_data = export_progress_store[export_id]
     export_data['status'] = 'processing'
-    export_data['current_step'] = 'Mengambil daftar retur...'
+    export_data['current_step'] = 'Mempersiapkan chunks tanggal...'
     export_data['progress'] = 5.0  # Start with 5%
     
     app.logger.info(f"Initial progress set to: {export_data['progress']}")
     app.logger.info(f"Shop ID: {export_data['shop_id']}")
     app.logger.info(f"Access token length: {len(access_token) if access_token else 'None'}")
+    app.logger.info(f"Date range: {export_data['date_from']} to {export_data['date_to']}")
+    
+    # Pecah date range jadi chunks 15 hari
+    date_chunks = get_date_chunks(export_data['date_from'], export_data['date_to'], 15)
+    print(f"=== DATE CHUNKING ===")
+    print(f"Total chunks: {len(date_chunks)}")
+    for i, (start, end) in enumerate(date_chunks):
+        print(f"Chunk {i+1}: {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}")
+    app.logger.info(f"Created {len(date_chunks)} date chunks")
     
     shop_id = export_data['shop_id']
     all_returns = []
-    page_no = 1
     total_processed = 0
-    max_pages_estimate = 50  # Estimate max pages for progress calculation
     
-    while True:
-        app.logger.info(f"=== LOOP PAGE {page_no} ===")
+    # Loop untuk setiap chunk tanggal
+    for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
+        print(f"=== PROCESSING CHUNK {chunk_index + 1}/{len(date_chunks)} ===")
+        print(f"Date range: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
+        app.logger.info(f"Processing chunk {chunk_index + 1}/{len(date_chunks)}: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
         
-        # Update progress at start of each loop to show activity
-        current_progress = 5.0 + (page_no * 2.0)  # Faster progress increment
-        export_data['progress'] = round(min(85.0, current_progress), 1)
-        export_data['current_step'] = f'Mengambil halaman {page_no}...'
+        # Update progress untuk chunk
+        chunk_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0  # 75% untuk semua chunks
+        export_data['progress'] = round(chunk_progress, 1)
+        export_data['current_step'] = f'Memproses chunk {chunk_index + 1}/{len(date_chunks)} ({chunk_start.strftime("%Y-%m-%d")} to {chunk_end.strftime("%Y-%m-%d")})'
         
-        app.logger.info(f"Progress updated to: {export_data['progress']}")
-        app.logger.info(f"Calling API for page {page_no}...")
+        # Reset pagination untuk chunk ini
+        page_no = 1
+        max_pages_estimate = 50
         
-        return_body = {"page_no": page_no, "page_size": 5}  # Small batch size
-        response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
-                                        shop_id=shop_id, access_token=access_token, body=return_body)
-        
-        app.logger.info(f"API response received. Error: {error}")
-        
-        if error:
-            app.logger.error(f"Returns API error: {error}")
-            export_data['error'] = f"Gagal mengambil daftar retur: {error}"
-            export_data['status'] = 'error'
-            return
+        # Loop pagination untuk chunk ini
+        while True:
+            app.logger.info(f"=== CHUNK {chunk_index + 1} PAGE {page_no} ===")
             
-        # Debug logging
-        app.logger.info(f"Returns page {page_no} response: {response}")
-        return_list = response.get('response', {}).get('return', [])
-        app.logger.info(f"Found {len(return_list)} returns on page {page_no}")
-        
-        # Log sample data for debugging
-        if return_list:
-            app.logger.info(f"Sample return data: {return_list[0]}")
-            print(f"=== PAGE {page_no} SAMPLE DATA ===")
-            print(f"Return SN: {return_list[0].get('return_sn')}")
-            print(f"Order SN: {return_list[0].get('order_sn')}")
-            print(f"Status: {return_list[0].get('status')}")
-            print(f"Refund Amount: {return_list[0].get('refund_amount')}")
-            print(f"====================")
+            # Update progress dalam chunk
+            page_progress = (page_no / max_pages_estimate) * (75.0 / len(date_chunks))  # Progress dalam chunk
+            current_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0 + page_progress
+            export_data['progress'] = round(min(85.0, current_progress), 1)
+            export_data['current_step'] = f'Chunk {chunk_index + 1}/{len(date_chunks)} - Halaman {page_no}...'
             
-        # Log all return_sn for tracking
-        return_sns = [ret.get('return_sn') for ret in return_list]
-        app.logger.info(f"Page {page_no} return_sn list: {return_sns}")
-        print(f"Page {page_no} return_sn list: {return_sns}")
-        
-        if not return_list:
-            app.logger.info("No more returns found, breaking loop")
-            break
+            app.logger.info(f"Progress updated to: {export_data['progress']}")
+            app.logger.info(f"Calling API for chunk {chunk_index + 1} page {page_no}...")
             
-        all_returns.extend(return_list)
-        total_processed += len(return_list)
+            # API call dengan date filter
+            return_body = {
+                "page_no": page_no, 
+                "page_size": 5,  # Small batch size
+                "create_time_from": int(chunk_start.timestamp()),
+                "create_time_to": int(chunk_end.timestamp())
+            }
+            
+            print(f"API call with date filter: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
+            response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                            shop_id=shop_id, access_token=access_token, body=return_body)
+            
+            app.logger.info(f"API response received. Error: {error}")
+            
+            if error:
+                app.logger.error(f"Returns API error: {error}")
+                export_data['error'] = f"Gagal mengambil daftar retur: {error}"
+                export_data['status'] = 'error'
+                return
+                
+            # Debug logging
+            return_list = response.get('response', {}).get('return', [])
+            app.logger.info(f"Found {len(return_list)} returns on chunk {chunk_index + 1} page {page_no}")
+            
+            # Log sample data for debugging
+            if return_list:
+                sample_return = return_list[0]
+                print(f"=== CHUNK {chunk_index + 1} PAGE {page_no} SAMPLE DATA ===")
+                print(f"Return SN: {sample_return.get('return_sn')}")
+                print(f"Order SN: {sample_return.get('order_sn')}")
+                print(f"Status: {sample_return.get('status')}")
+                print(f"Create Time: {datetime.fromtimestamp(sample_return.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if sample_return.get('create_time') else 'None'}")
+                print(f"Refund Amount: {sample_return.get('refund_amount')}")
+                print(f"====================")
+                
+            # Log all return_sn for tracking
+            return_sns = [ret.get('return_sn') for ret in return_list]
+            app.logger.info(f"Chunk {chunk_index + 1} page {page_no} return_sn list: {return_sns}")
+            print(f"Chunk {chunk_index + 1} page {page_no} return_sn: {return_sns}")
+            
+            if not return_list:
+                app.logger.info(f"No more returns found in chunk {chunk_index + 1}, breaking pagination loop")
+                print(f"No more data in chunk {chunk_index + 1}, moving to next chunk")
+                break
+                
+            all_returns.extend(return_list)
+            total_processed += len(return_list)
+            
+            app.logger.info(f"Chunk {chunk_index + 1} progress: {current_progress:.1f}%, total processed: {total_processed}")
+            print(f"Total processed so far: {total_processed}")
+            
+            # Add delay to prevent rate limiting
+            time.sleep(2)  # Increased delay
+            page_no += 1
+            
+            # Safety limit per chunk
+            if page_no > 200:  # Max 1000 records per chunk (200 * 5)
+                app.logger.info(f"Reached safety limit of 200 pages in chunk {chunk_index + 1}")
+                print(f"Safety limit reached in chunk {chunk_index + 1}")
+                break
         
-        # Better progress calculation with decimals (5% start + 80% for data collection)
-        progress_pct = 10.0 + min(75.0, (page_no / max_pages_estimate) * 75.0)
-        export_data['progress'] = round(progress_pct, 1)  # 1 decimal place
-        export_data['current_step'] = f'Memproses retur... {total_processed} data (halaman {page_no})'
-        
-        app.logger.info(f"Progress updated: {progress_pct:.1f}%, total processed: {total_processed}")
-        
-        # Add delay to prevent rate limiting
-        time.sleep(2)  # Increased delay
-        page_no += 1
-        
-        # Safety limit
-        if page_no > 200:  # Max 1000 records (200 * 5)
-            app.logger.info("Reached safety limit of 200 pages")
-            break
+        print(f"=== CHUNK {chunk_index + 1} COMPLETED ===")
+        print(f"Total returns from chunk {chunk_index + 1}: {len([r for r in all_returns[-total_processed:]])}")
+        app.logger.info(f"Chunk {chunk_index + 1} completed")
     
     # Process the collected data
     export_data['current_step'] = 'Memproses data untuk Excel...'
