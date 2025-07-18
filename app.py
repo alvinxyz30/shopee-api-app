@@ -329,43 +329,37 @@ def start_chunked_export():
         print(f"Access token available: {access_token is not None}")
         app.logger.info(f"Access token available: {access_token is not None}")
         
-        # Process synchronously for debugging (no threading)
+        # Start async processing to prevent timeout
         export_data['status'] = 'processing'
         export_data['progress'] = 1.0
         export_data['current_step'] = 'Memulai proses export...'
         session.modified = True
         
-        print(f"Starting export for data_type: {export_data['data_type']}")
-        app.logger.info(f"Starting export for data_type: {export_data['data_type']}")
+        print(f"Starting async export for data_type: {export_data['data_type']}")
+        app.logger.info(f"Starting async export for data_type: {export_data['data_type']}")
         
-        if export_data['data_type'] == 'returns':
-            print("Calling process_returns_chunked...")
-            app.logger.info("Calling process_returns_chunked...")
-            process_returns_chunked(export_data, access_token)
-            print("process_returns_chunked completed")
-            app.logger.info("process_returns_chunked completed")
-        elif export_data['data_type'] == 'orders':
-            print("Calling process_orders_chunked...")
-            app.logger.info("Calling process_orders_chunked...")
-            process_orders_chunked(export_data, access_token)
-        elif export_data['data_type'] == 'products':
-            print("Calling process_products_chunked...")
-            app.logger.info("Calling process_products_chunked...")
-            process_products_chunked(export_data, access_token)
+        # Start processing in background thread
+        def background_process():
+            try:
+                if export_data['data_type'] == 'returns':
+                    process_returns_chunked(export_data, access_token)
+                elif export_data['data_type'] == 'orders':
+                    process_orders_chunked(export_data, access_token)
+                elif export_data['data_type'] == 'products':
+                    process_products_chunked(export_data, access_token)
+            except Exception as e:
+                app.logger.error(f"Background process error: {e}")
+                export_data['error'] = str(e)
+                export_data['status'] = 'error'
+                session.modified = True
         
-        print(f"Export completed with progress: {export_data.get('progress', 100)}")
-        app.logger.info(f"Export completed with progress: {export_data.get('progress', 100)}")
+        # Start thread and return immediately
+        thread = threading.Thread(target=background_process)
+        thread.daemon = True
+        thread.start()
         
-        # Always return success status, even if there were API errors
-        # The errors are handled in the processing functions and stored in session
-        if export_data.get('status') == 'error':
-            print(f"Returning error status: {export_data.get('error')}")
-            app.logger.info(f"Returning error status: {export_data.get('error')}")
-            return {"status": "error", "error": export_data.get('error')}
-        else:
-            print(f"Returning completed status with progress: {export_data.get('progress', 100)}")
-            app.logger.info(f"Returning completed status with progress: {export_data.get('progress', 100)}")
-            return {"status": "completed", "progress": export_data.get('progress', 100)}
+        # Return immediately to prevent timeout
+        return {"status": "started", "progress": 1.0, "message": "Export process started"}
             
     except Exception as e:
         print(f"EXCEPTION in start_chunked_export: {e}")
