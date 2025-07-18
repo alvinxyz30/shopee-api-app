@@ -209,7 +209,7 @@
                     console.error('Polling error:', error);
                     // Don't clear interval on network errors, keep trying
                 });
-            }, 3000); // Poll every 3 seconds
+            }, 1000); // Poll every 1 second (faster)
         }
         
         // Auto-start if status is processing (page refresh case)

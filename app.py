@@ -281,7 +281,10 @@ def start_chunked_export():
     try:
         shop_data = session.get('shops', {}).get(export_data['shop_id'])
         if not shop_data:
-            return {"error": "Shop data not found"}, 400
+            export_data['error'] = "Shop data not found"
+            export_data['status'] = 'error'
+            session.modified = True
+            return {"error": "Shop data not found"}
             
         access_token = shop_data['access_token']
         
@@ -305,13 +308,20 @@ def start_chunked_export():
             process_products_chunked(export_data, access_token)
         
         app.logger.info(f"Export completed with progress: {export_data.get('progress', 100)}")
-        return {"status": "completed", "progress": export_data.get('progress', 100)}
+        
+        # Always return success status, even if there were API errors
+        # The errors are handled in the processing functions and stored in session
+        if export_data.get('status') == 'error':
+            return {"status": "error", "error": export_data.get('error')}
+        else:
+            return {"status": "completed", "progress": export_data.get('progress', 100)}
+            
     except Exception as e:
         app.logger.error(f"Failed to start export: {e}")
         export_data['error'] = str(e)
         export_data['status'] = 'error'
         session.modified = True
-        return {"error": str(e)}, 500
+        return {"error": str(e)}
 
 def process_returns_chunked(export_data, access_token):
     """Process returns data in small chunks."""
