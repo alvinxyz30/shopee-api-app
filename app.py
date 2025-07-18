@@ -457,12 +457,16 @@ def process_chunk_data(chunk_returns, data_type='returns'):
                 "Status": item.get('status'),
                 "Alasan": item.get('reason'),
                 "Tanggal Dibuat": datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('create_time') else None,
-                "Metode Pembayaran": item.get('payment_method'),
-                "Resi Pengembalian": item.get('logistics', {}).get('tracking_number') if item.get('logistics') else None,
+                "Mata Uang": item.get('currency'),
+                "Resi Pengembalian": item.get('tracking_number'),  # Fixed: Direct field access
                 "Total Pengembalian Dana": item.get('refund_amount'),
                 "Alasan Teks dari Pembeli": item.get('text_reason'),
-                "User ID": item.get('user_id'),
-                "Tanggal Update": datetime.fromtimestamp(item.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('update_time') else None
+                "Username Pembeli": item.get('user', {}).get('username') if item.get('user') else None,
+                "Email Pembeli": item.get('user', {}).get('email') if item.get('user') else None,
+                "Tanggal Update": datetime.fromtimestamp(item.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('update_time') else None,
+                "Tanggal Jatuh Tempo": datetime.fromtimestamp(item.get('due_date')).strftime('%Y-%m-%d %H:%M:%S') if item.get('due_date') else None,
+                "Negotiation Status": item.get('negotiation_status'),
+                "Needs Logistics": "Ya" if item.get('needs_logistics') else "Tidak"
             }
         else:
             # Default processing for other data types
