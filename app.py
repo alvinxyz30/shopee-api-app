@@ -200,6 +200,19 @@ def test_returns_api():
         "url_called": f"{BASE_URL}/api/v2/returns/get_return_list"
     }
 
+@app.route('/test_connection', methods=['GET', 'POST'])
+def test_connection():
+    """Test if server can receive requests."""
+    print("=== TEST_CONNECTION CALLED ===")
+    print(f"Method: {request.method}")
+    print(f"Headers: {dict(request.headers)}")
+    
+    if request.method == 'POST':
+        print(f"POST data: {request.get_json()}")
+        return {"message": "POST request received successfully", "method": "POST"}
+    else:
+        return {"message": "GET request received successfully", "method": "GET"}
+
 # Placeholder untuk fungsi lihat data
 @app.route('/fetch_data', methods=['POST'])
 def fetch_data():
@@ -246,27 +259,38 @@ def export_data():
 @app.route('/export_progress')
 def export_progress():
     """Progress page for chunked export processing."""
+    print("=== EXPORT_PROGRESS PAGE ACCESSED ===")
     export_data = session.get('current_export')
+    print(f"Export data: {export_data}")
+    
     if not export_data:
+        print("No export data found, redirecting to dashboard")
         flash("Tidak ada proses ekspor yang sedang berjalan.", 'warning')
         return redirect(url_for('dashboard'))
     
+    print("Rendering progress.html template")
     return render_template('progress.html', export_data=export_data)
 
 @app.route('/api/progress_status')
 def progress_status():
     """API endpoint to get current progress status."""
+    print("=== PROGRESS_STATUS API CALLED ===")
     export_data = session.get('current_export')
+    print(f"Progress status export_data: {export_data}")
+    
     if not export_data:
+        print("No export data found for progress status")
         return {"error": "No export process found"}, 404
     
-    return {
+    response_data = {
         "status": export_data.get('status', 'unknown'),
         "progress": export_data.get('progress', 0),
         "current_step": export_data.get('current_step', ''),
         "error": export_data.get('error'),
         "data_count": len(export_data.get('data', []))
     }
+    print(f"Returning progress status: {response_data}")
+    return response_data
 
 @app.route('/start_chunked_export', methods=['POST'])
 def start_chunked_export():
@@ -374,7 +398,7 @@ def process_returns_chunked(export_data, access_token):
         app.logger.info(f"=== LOOP PAGE {page_no} ===")
         
         # Update progress at start of each loop to show activity
-        current_progress = 5.0 + (page_no * 0.5)  # Incremental progress
+        current_progress = 5.0 + (page_no * 2.0)  # Faster progress increment
         export_data['progress'] = round(min(85.0, current_progress), 1)
         export_data['current_step'] = f'Mengambil halaman {page_no}...'
         session.modified = True
@@ -408,7 +432,7 @@ def process_returns_chunked(export_data, access_token):
         total_processed += len(return_list)
         
         # Better progress calculation with decimals (5% start + 80% for data collection)
-        progress_pct = 5.0 + min(80.0, (page_no / max_pages_estimate) * 80.0)
+        progress_pct = 10.0 + min(75.0, (page_no / max_pages_estimate) * 75.0)
         export_data['progress'] = round(progress_pct, 1)  # 1 decimal place
         export_data['current_step'] = f'Memproses retur... {total_processed} data (halaman {page_no})'
         session.modified = True
