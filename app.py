@@ -312,8 +312,10 @@ def progress_status():
     export_id = export_data.get('export_id')
     if export_id and export_id in export_progress_store:
         export_data = export_progress_store[export_id]
-        # Update session with latest data
-        session['current_export'] = export_data
+        # Update session with latest data (WITHOUT the data field to reduce cookie size)
+        session_data = export_data.copy()
+        session_data.pop('data', None)  # Remove data from session to fix cookie size
+        session['current_export'] = session_data
         session.modified = True
         # Safe print untuk data besar
         data_count = len(export_data.get('data', []))
@@ -791,8 +793,10 @@ def download_export():
     export_id = export_data.get('export_id')
     if export_id and export_id in export_progress_store:
         export_data = export_progress_store[export_id]
-        # Update session with latest data
-        session['current_export'] = export_data
+        # Update session with latest data (WITHOUT the data field to reduce cookie size)
+        session_data = export_data.copy()
+        session_data.pop('data', None)  # Remove data from session to fix cookie size
+        session['current_export'] = session_data
         session.modified = True
     
     if export_data['status'] != 'completed':
@@ -818,6 +822,13 @@ def download_export():
     # Clear the export data from session
     session.pop('current_export', None)
     session.modified = True
+    
+    # Auto-cleanup: Remove data from memory store after successful download
+    export_id = export_data.get('export_id')
+    if export_id and export_id in export_progress_store:
+        del export_progress_store[export_id]
+        print(f"Auto-cleanup: Removed export data {export_id} from memory after download")
+        app.logger.info(f"Auto-cleanup: Removed export data {export_id} from memory after download")
     
     return response
 
