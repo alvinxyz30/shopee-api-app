@@ -270,7 +270,7 @@ def progress_status():
 
 @app.route('/start_chunked_export', methods=['POST'])
 def start_chunked_export():
-    """Start the actual chunked export process."""
+    """Start the actual chunked export process (SYNC VERSION for debugging)."""
     export_data = session.get('current_export')
     if not export_data:
         return {"error": "No export process found"}, 400
@@ -285,33 +285,20 @@ def start_chunked_export():
             
         access_token = shop_data['access_token']
         
-        # Start processing asynchronously using threading
-        
+        # Process synchronously for debugging (no threading)
         export_data['status'] = 'processing'
         export_data['progress'] = 1.0
         export_data['current_step'] = 'Memulai proses export...'
         session.modified = True
         
-        def run_export():
-            try:
-                if export_data['data_type'] == 'returns':
-                    process_returns_chunked(export_data, access_token)
-                elif export_data['data_type'] == 'orders':
-                    process_orders_chunked(export_data, access_token)
-                elif export_data['data_type'] == 'products':
-                    process_products_chunked(export_data, access_token)
-            except Exception as e:
-                app.logger.error(f"Export process error: {e}")
-                export_data['error'] = str(e)
-                export_data['status'] = 'error'
-                session.modified = True
+        if export_data['data_type'] == 'returns':
+            process_returns_chunked(export_data, access_token)
+        elif export_data['data_type'] == 'orders':
+            process_orders_chunked(export_data, access_token)
+        elif export_data['data_type'] == 'products':
+            process_products_chunked(export_data, access_token)
         
-        # Start the export in a background thread
-        thread = threading.Thread(target=run_export)
-        thread.daemon = True
-        thread.start()
-        
-        return {"status": "started", "progress": 1}
+        return {"status": "completed", "progress": export_data.get('progress', 100)}
     except Exception as e:
         app.logger.error(f"Failed to start export: {e}")
         export_data['error'] = str(e)
