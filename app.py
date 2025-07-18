@@ -293,6 +293,9 @@ def progress_status():
     export_id = export_data.get('export_id')
     if export_id and export_id in export_progress_store:
         export_data = export_progress_store[export_id]
+        # Update session with latest data
+        session['current_export'] = export_data
+        session.modified = True
         # Safe print untuk data besar
         data_count = len(export_data.get('data', []))
         print(f"Using updated data from global store: Progress={export_data.get('progress')}%, Status={export_data.get('status')}, Records={data_count}")
@@ -574,13 +577,128 @@ def process_returns_chunked_global(export_id, access_token):
 
 def process_orders_chunked_global(export_id, access_token):
     """Process orders data in small chunks using global store."""
+    app.logger.info("=== STARTING process_orders_chunked_global ===")
+    
     if export_id not in export_progress_store:
         return
+    
     export_data = export_progress_store[export_id]
-    export_data['status'] = 'completed'  # Placeholder
-    export_data['progress'] = 100
-    export_data['current_step'] = 'Orders processing not implemented yet'
-    export_data['data'] = []
+    export_data['status'] = 'processing'
+    export_data['current_step'] = 'Mempersiapkan chunks tanggal untuk orders...'
+    export_data['progress'] = 5.0
+    
+    app.logger.info(f"Initial progress set to: {export_data['progress']}")
+    app.logger.info(f"Shop ID: {export_data['shop_id']}")
+    app.logger.info(f"Date range: {export_data['date_from']} to {export_data['date_to']}")
+    
+    # Pecah date range jadi chunks 15 hari
+    date_chunks = get_date_chunks(export_data['date_from'], export_data['date_to'], 15)
+    app.logger.info(f"Created {len(date_chunks)} date chunks for orders")
+    
+    shop_id = export_data['shop_id']
+    all_orders = []
+    total_processed = 0
+    
+    # Loop untuk setiap chunk tanggal
+    for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
+        app.logger.info(f"Processing orders chunk {chunk_index + 1}/{len(date_chunks)}: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
+        
+        # Update progress untuk chunk
+        chunk_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0
+        export_data['progress'] = round(chunk_progress, 1)
+        export_data['current_step'] = f'Memproses orders chunk {chunk_index + 1}/{len(date_chunks)} ({chunk_start.strftime("%Y-%m-%d")} to {chunk_end.strftime("%Y-%m-%d")})'
+        
+        # Reset pagination untuk chunk ini
+        page_no = 1
+        max_pages_estimate = 50
+        
+        # Loop pagination untuk chunk ini
+        while True:
+            app.logger.info(f"=== ORDERS CHUNK {chunk_index + 1} PAGE {page_no} ===")
+            
+            # Update progress dalam chunk
+            page_progress = (page_no / max_pages_estimate) * (75.0 / len(date_chunks))
+            current_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0 + page_progress
+            export_data['progress'] = round(min(85.0, current_progress), 1)
+            export_data['current_step'] = f'Orders Chunk {chunk_index + 1}/{len(date_chunks)} - Halaman {page_no}...'
+            
+            # API call untuk orders dengan date filter
+            order_body = {
+                "page_no": page_no,
+                "page_size": 20,  # Larger page size for orders
+                "time_range_field": "create_time",
+                "time_from": int(chunk_start.timestamp()),
+                "time_to": int(chunk_end.timestamp()),
+                "order_status": "ALL"
+            }
+            
+            response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
+                                            shop_id=shop_id, access_token=access_token, body=order_body)
+            
+            if error:
+                app.logger.error(f"Orders API error: {error}")
+                export_data['error'] = f"Gagal mengambil daftar pesanan: {error}"
+                export_data['status'] = 'error'
+                return
+            
+            # Process response
+            order_list = response.get('response', {}).get('order_list', [])
+            app.logger.info(f"Found {len(order_list)} orders on chunk {chunk_index + 1} page {page_no}")
+            
+            if not order_list:
+                app.logger.info(f"No more orders found in chunk {chunk_index + 1}, breaking pagination loop")
+                break
+            
+            all_orders.extend(order_list)
+            total_processed += len(order_list)
+            
+            # Add delay to prevent rate limiting
+            time.sleep(1)
+            page_no += 1
+            
+            # Safety limit per chunk
+            if page_no > 100:
+                app.logger.info(f"Reached safety limit of 100 pages in orders chunk {chunk_index + 1}")
+                break
+        
+        app.logger.info(f"Orders chunk {chunk_index + 1} completed")
+    
+    # Process the collected data
+    export_data['current_step'] = 'Memproses data orders untuk Excel...'
+    export_data['progress'] = 95.0
+    
+    if all_orders:
+        processed_orders = []
+        app.logger.info(f"Processing {len(all_orders)} total orders")
+        
+        for order in all_orders:
+            processed_item = {
+                "Nomor Pesanan": order.get('order_sn'),
+                "Status Pesanan": order.get('order_status'),
+                "Tanggal Dibuat": datetime.fromtimestamp(order.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if order.get('create_time') else None,
+                "Tanggal Update": datetime.fromtimestamp(order.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if order.get('update_time') else None,
+                "Total Harga": order.get('total_amount'),
+                "Mata Uang": order.get('currency'),
+                "Metode Pembayaran": order.get('payment_method'),
+                "Estimasi Pengiriman": order.get('estimated_shipping_fee'),
+                "Resi": order.get('tracking_number'),
+                "Pesan dari Pembeli": order.get('message_to_seller'),
+                "Negara": order.get('recipient_address', {}).get('country') if order.get('recipient_address') else None,
+                "Kota": order.get('recipient_address', {}).get('city') if order.get('recipient_address') else None
+            }
+            processed_orders.append(processed_item)
+        
+        export_data['data'] = processed_orders
+        export_data['status'] = 'completed'
+        export_data['progress'] = 100.0
+        export_data['current_step'] = f'Selesai! {len(processed_orders)} pesanan berhasil diproses'
+        
+        app.logger.info(f"Orders export completed with {len(processed_orders)} records")
+    else:
+        export_data['status'] = 'completed'
+        export_data['progress'] = 100.0
+        export_data['current_step'] = 'Tidak ada data pesanan ditemukan'
+        export_data['data'] = []
 
 def process_products_chunked_global(export_id, access_token):
     """Process products data in small chunks using global store."""
@@ -596,11 +714,23 @@ def process_products_chunked_global(export_id, access_token):
 def download_export():
     """Download the completed export as Excel file."""
     export_data = session.get('current_export')
-    if not export_data or export_data['status'] != 'completed':
+    if not export_data:
         flash("Tidak ada data ekspor yang siap untuk diunduh.", 'warning')
         return redirect(url_for('dashboard'))
     
-    if not export_data['data']:
+    # Get the latest data from global store
+    export_id = export_data.get('export_id')
+    if export_id and export_id in export_progress_store:
+        export_data = export_progress_store[export_id]
+        # Update session with latest data
+        session['current_export'] = export_data
+        session.modified = True
+    
+    if export_data['status'] != 'completed':
+        flash("Ekspor belum selesai. Status: " + export_data.get('status', 'unknown'), 'warning')
+        return redirect(url_for('dashboard'))
+    
+    if not export_data.get('data'):
         flash("Tidak ada data untuk diekspor.", 'warning')
         return redirect(url_for('dashboard'))
     
