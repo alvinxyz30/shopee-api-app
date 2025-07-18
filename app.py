@@ -469,7 +469,7 @@ def process_returns_chunked_global(export_id, access_token):
             # API call dengan date filter
             return_body = {
                 "page_no": page_no, 
-                "page_size": 5,  # Small batch size
+                "page_size": 2,  # Reduced batch size to prevent 502 errors
                 "create_time_from": int(chunk_start.timestamp()),
                 "create_time_to": int(chunk_end.timestamp())
             }
@@ -518,12 +518,12 @@ def process_returns_chunked_global(export_id, access_token):
             print(f"Total processed so far: {total_processed}")
             
             # Add delay to prevent rate limiting
-            time.sleep(2)  # Increased delay
+            time.sleep(3)  # Increased delay to 3 seconds
             page_no += 1
             
             # Safety limit per chunk
-            if page_no > 200:  # Max 1000 records per chunk (200 * 5)
-                app.logger.info(f"Reached safety limit of 200 pages in chunk {chunk_index + 1}")
+            if page_no > 500:  # Max 1000 records per chunk (500 * 2)
+                app.logger.info(f"Reached safety limit of 500 pages in chunk {chunk_index + 1}")
                 print(f"Safety limit reached in chunk {chunk_index + 1}")
                 break
         
