@@ -291,13 +291,20 @@ def start_chunked_export():
         export_data['current_step'] = 'Memulai proses export...'
         session.modified = True
         
+        app.logger.info(f"Starting export for data_type: {export_data['data_type']}")
+        
         if export_data['data_type'] == 'returns':
+            app.logger.info("Calling process_returns_chunked...")
             process_returns_chunked(export_data, access_token)
+            app.logger.info("process_returns_chunked completed")
         elif export_data['data_type'] == 'orders':
+            app.logger.info("Calling process_orders_chunked...")
             process_orders_chunked(export_data, access_token)
         elif export_data['data_type'] == 'products':
+            app.logger.info("Calling process_products_chunked...")
             process_products_chunked(export_data, access_token)
         
+        app.logger.info(f"Export completed with progress: {export_data.get('progress', 100)}")
         return {"status": "completed", "progress": export_data.get('progress', 100)}
     except Exception as e:
         app.logger.error(f"Failed to start export: {e}")
@@ -308,10 +315,16 @@ def start_chunked_export():
 
 def process_returns_chunked(export_data, access_token):
     """Process returns data in small chunks."""
+    app.logger.info("=== STARTING process_returns_chunked ===")
+    
     export_data['status'] = 'processing'
     export_data['current_step'] = 'Mengambil daftar retur...'
     export_data['progress'] = 5.0  # Start with 5%
     session.modified = True
+    
+    app.logger.info(f"Initial progress set to: {export_data['progress']}")
+    app.logger.info(f"Shop ID: {export_data['shop_id']}")
+    app.logger.info(f"Access token length: {len(access_token) if access_token else 'None'}")
     
     shop_id = export_data['shop_id']
     all_returns = []
@@ -320,15 +333,22 @@ def process_returns_chunked(export_data, access_token):
     max_pages_estimate = 50  # Estimate max pages for progress calculation
     
     while True:
+        app.logger.info(f"=== LOOP PAGE {page_no} ===")
+        
         # Update progress at start of each loop to show activity
         current_progress = 5.0 + (page_no * 0.5)  # Incremental progress
         export_data['progress'] = round(min(85.0, current_progress), 1)
         export_data['current_step'] = f'Mengambil halaman {page_no}...'
         session.modified = True
         
+        app.logger.info(f"Progress updated to: {export_data['progress']}")
+        app.logger.info(f"Calling API for page {page_no}...")
+        
         return_body = {"page_no": page_no, "page_size": 5}  # Small batch size
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
                                         shop_id=shop_id, access_token=access_token, body=return_body)
+        
+        app.logger.info(f"API response received. Error: {error}")
         
         if error:
             app.logger.error(f"Returns API error: {error}")
