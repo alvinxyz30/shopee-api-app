@@ -15,10 +15,10 @@ import io
 # Ganti nilai-nilai di bawah ini dengan data Anda.
 # ==============================================================================
 # ID Partner dari Shopee Developer Center
-PARTNER_ID = 2012002
+PARTNER_ID = 0  # GANTI DENGAN PARTNER ID ANDA
 
 # Kunci Partner dari Shopee Developer Center
-PARTNER_KEY = "shpk715045424a75484f6b7379476f4c44444d506b4d4b6f7a6d4f544a4f6a6d"
+PARTNER_KEY = "GANTI_DENGAN_PARTNER_KEY_ANDA"
 
 # Domain tempat aplikasi Anda berjalan (tanpa / di akhir)
 REDIRECT_URL_DOMAIN = "https://alvinnovendra2.pythonanywhere.com" 
@@ -146,7 +146,8 @@ def callback():
         flash("Respons token dari Shopee tidak lengkap.", 'danger')
         return redirect(url_for('dashboard'))
 
-    path_info = "/api/v2/shop/get_shop_info"
+    # PERBAIKAN: Menggunakan endpoint /api/v2/shop/get_profile sesuai saran
+    path_info = "/api/v2/shop/get_profile"
     info_data, error = call_shopee_api(path_info, shop_id=int(shop_id_str), access_token=access_token)
     shop_name = f"Toko {shop_id_str}"
     if error:
@@ -203,24 +204,15 @@ def export_data():
     try:
         # --- DISPATCHER LOGIC ---
         if data_type == 'orders':
-            # 1. Ambil Parameter Tanggal
             date_from_str = request.form.get('date_from')
             date_to_str = request.form.get('date_to')
             time_from = int(datetime.strptime(date_from_str, '%Y-%m-%d').timestamp())
-            # Tambah 1 hari ke date_to untuk mencakup seluruh hari tersebut
             time_to = int((datetime.strptime(date_to_str, '%Y-%m-%d') + timedelta(days=1)).timestamp())
 
-            # 2. Ambil semua Order SN dengan paginasi cursor
             all_order_sn_list = []
             cursor = ""
             while True:
-                order_list_body = {
-                    "time_range_field": "create_time",
-                    "time_from": time_from,
-                    "time_to": time_to,
-                    "page_size": 100,
-                    "cursor": cursor
-                }
+                order_list_body = {"time_range_field": "create_time", "time_from": time_from, "time_to": time_to, "page_size": 100, "cursor": cursor}
                 response, error = call_shopee_api("/api/v2/order/get_order_list", shop_id=shop_id, access_token=access_token, body=order_list_body)
                 if error:
                     raise Exception(f"Gagal mengambil daftar pesanan: {error}")
@@ -233,7 +225,6 @@ def export_data():
                     break
                 cursor = response.get('response', {}).get('next_cursor', "")
 
-            # 3. Ambil detail pesanan dalam batch
             detailed_orders = []
             if all_order_sn_list:
                 for i in range(0, len(all_order_sn_list), 50):
@@ -242,7 +233,7 @@ def export_data():
                     response, error = call_shopee_api("/api/v2/order/get_order_detail", shop_id=shop_id, access_token=access_token, body=detail_body)
                     if error:
                         app.logger.error(f"Gagal mengambil detail untuk batch: {error}")
-                        continue # Lanjutkan ke batch berikutnya
+                        continue
                     detailed_orders.extend(response.get('response', {}).get('order_list', []))
             
             if detailed_orders:
@@ -252,19 +243,8 @@ def export_data():
             all_items = []
             offset = 0
             while True:
-                list_body = {
-                    "offset": offset,
-                    "page_size": 100,
-                    "item_status": ["NORMAL", "UNLIST"]
-                }
-                # PERBAIKAN: Menggunakan method='GET' sesuai dokumentasi API
-                response, error = call_shopee_api(
-                    "/api/v2/product/get_item_list",
-                    method='GET',
-                    shop_id=shop_id,
-                    access_token=access_token,
-                    body=list_body
-                )
+                list_body = {"offset": offset, "page_size": 100, "item_status": ["NORMAL", "UNLIST"]}
+                response, error = call_shopee_api("/api/v2/product/get_item_list", method='GET', shop_id=shop_id, access_token=access_token, body=list_body)
                 if error:
                     raise Exception(f"Gagal mengambil daftar produk: {error}")
 
@@ -273,7 +253,6 @@ def export_data():
                 
                 if item_list:
                     item_ids = [item['item_id'] for item in item_list]
-                    
                     detail_body = {"item_id_list": item_ids}
                     detail_response, detail_error = call_shopee_api("/api/v2/product/get_item_base_info", shop_id=shop_id, access_token=access_token, body=detail_body)
                     if not detail_error:
@@ -306,21 +285,9 @@ def export_data():
             if all_returns:
                 processed_returns = []
                 for ret in all_returns:
-                    processed_item = {
-                        "Nomor Pesanan": ret.get('order_sn'),
-                        "Nomor Retur": ret.get('return_sn'),
-                        "Status": ret.get('status'),
-                        "Alasan": ret.get('reason'),
-                        "Tanggal Dibuat": datetime.fromtimestamp(ret.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('create_time') else None,
-                        "Metode Pembayaran": ret.get('payment_method'),
-                        "Resi Pengembalian": ret.get('logistics', {}).get('tracking_number'),
-                        "Total Pengembalian Dana": ret.get('refund_amount'),
-                        "Alasan Teks dari Pembeli": ret.get('text_reason')
-                    }
+                    processed_item = {"Nomor Pesanan": ret.get('order_sn'), "Nomor Retur": ret.get('return_sn'), "Status": ret.get('status'), "Alasan": ret.get('reason'), "Tanggal Dibuat": datetime.fromtimestamp(ret.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('create_time') else None, "Metode Pembayaran": ret.get('payment_method'), "Resi Pengembalian": ret.get('logistics', {}).get('tracking_number'), "Total Pengembalian Dana": ret.get('refund_amount'), "Alasan Teks dari Pembeli": ret.get('text_reason')}
                     processed_returns.append(processed_item)
                 df = pd.DataFrame(processed_returns)
-
-        # --- AKHIR DISPATCHER ---
 
         if df.empty:
             flash(f"Tidak ada data ditemukan untuk laporan '{data_type}'.", 'warning')
