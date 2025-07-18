@@ -148,7 +148,7 @@ def callback():
 
     # DIKEMBALIKAN: Menggunakan endpoint /api/v2/shop/get_shop_info yang lebih standar
     path_info = "/api/v2/shop/get_shop_info"
-    info_data, error = call_shopee_api(path_info, shop_id=int(shop_id_str), access_token=access_token)
+    info_data, error = call_shopee_api(path_info, method='GET', shop_id=int(shop_id_str), access_token=access_token)
     shop_name = f"Toko {shop_id_str}"
     if error:
         flash(f"Gagal mendapatkan info nama toko: {error}. Menggunakan ID sebagai nama.", 'warning')
