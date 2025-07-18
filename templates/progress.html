@@ -54,9 +54,9 @@
             <div class="progress">
                 <div class="progress-bar progress-bar-striped progress-bar-animated" 
                      role="progressbar" 
-                     style="width: {{ export_data.progress }}%"
+                     style="width: 0%"
                      id="progressBar">
-                    {{ export_data.progress }}%
+                    0%
                 </div>
             </div>
 
@@ -120,28 +120,44 @@
             if (isProcessing) return;
             
             isProcessing = true;
-            document.getElementById('startBtn').disabled = true;
-            document.getElementById('startBtn').innerHTML = '<div class="spinner-border spinner-border-sm" role="status"></div> Memulai...';
+            const startBtn = document.getElementById('startBtn');
+            if (startBtn) {
+                startBtn.disabled = true;
+                startBtn.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"></div> Memulai...';
+            }
             
+            // Update UI to show processing started
+            document.getElementById('progressBar').style.width = '1%';
+            document.getElementById('progressBar').textContent = '1%';
+            document.getElementById('statusText').innerHTML = '<div class="spinner-border spinner-border-sm text-primary" role="status"></div> Memulai export...';
+            
+            // Start the background export process
             fetch('/start_chunked_export', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                }
+                },
+                body: JSON.stringify({})
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
             .then(data => {
+                console.log('Export started:', data);
                 if (data.error) {
                     alert('Error: ' + data.error);
                     location.reload();
                 } else {
-                    // Start polling for progress updates
+                    // Start polling for progress updates immediately
                     startProgressPolling();
                 }
             })
             .catch(error => {
-                console.error('Error:', error);
-                alert('Terjadi kesalahan saat memulai export');
+                console.error('Error starting export:', error);
+                alert('Terjadi kesalahan saat memulai export: ' + error.message);
                 location.reload();
             });
         }

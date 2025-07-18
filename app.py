@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import requests
 import json
+import threading
 from flask import Flask, request, redirect, url_for, render_template, session, flash, make_response
 from datetime import datetime, timedelta
 import pandas as pd
@@ -176,6 +177,29 @@ def clear_session():
     flash('Semua data sesi dan toko terhubung telah dihapus.', 'info')
     return redirect(url_for('dashboard'))
 
+@app.route('/test_returns_api')
+def test_returns_api():
+    """Test returns API to debug issues."""
+    shops = session.get('shops', {})
+    if not shops:
+        return {"error": "No shops found in session"}, 400
+    
+    # Get first shop for testing
+    shop_id, shop_data = next(iter(shops.items()))
+    access_token = shop_data['access_token']
+    
+    # Test single API call
+    return_body = {"page_no": 1, "page_size": 5}
+    response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                    shop_id=shop_id, access_token=access_token, body=return_body)
+    
+    return {
+        "shop_id": shop_id,
+        "api_response": response,
+        "error": error,
+        "url_called": f"{BASE_URL}/api/v2/returns/get_return_list"
+    }
+
 # Placeholder untuk fungsi lihat data
 @app.route('/fetch_data', methods=['POST'])
 def fetch_data():
@@ -251,19 +275,45 @@ def start_chunked_export():
     if not export_data:
         return {"error": "No export process found"}, 400
     
+    if export_data.get('status') == 'processing':
+        return {"status": "already_processing", "progress": export_data.get('progress', 0)}
+    
     try:
         shop_data = session.get('shops', {}).get(export_data['shop_id'])
+        if not shop_data:
+            return {"error": "Shop data not found"}, 400
+            
         access_token = shop_data['access_token']
         
-        if export_data['data_type'] == 'returns':
-            process_returns_chunked(export_data, access_token)
-        elif export_data['data_type'] == 'orders':
-            process_orders_chunked(export_data, access_token)
-        elif export_data['data_type'] == 'products':
-            process_products_chunked(export_data, access_token)
-            
-        return {"status": "success", "progress": export_data['progress']}
+        # Start processing asynchronously using threading
+        
+        export_data['status'] = 'processing'
+        export_data['progress'] = 1
+        export_data['current_step'] = 'Memulai proses export...'
+        session.modified = True
+        
+        def run_export():
+            try:
+                if export_data['data_type'] == 'returns':
+                    process_returns_chunked(export_data, access_token)
+                elif export_data['data_type'] == 'orders':
+                    process_orders_chunked(export_data, access_token)
+                elif export_data['data_type'] == 'products':
+                    process_products_chunked(export_data, access_token)
+            except Exception as e:
+                app.logger.error(f"Export process error: {e}")
+                export_data['error'] = str(e)
+                export_data['status'] = 'error'
+                session.modified = True
+        
+        # Start the export in a background thread
+        thread = threading.Thread(target=run_export)
+        thread.daemon = True
+        thread.start()
+        
+        return {"status": "started", "progress": 1}
     except Exception as e:
+        app.logger.error(f"Failed to start export: {e}")
         export_data['error'] = str(e)
         export_data['status'] = 'error'
         session.modified = True
