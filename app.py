@@ -15,10 +15,10 @@ import io
 # Ganti nilai-nilai di bawah ini dengan data Anda.
 # ==============================================================================
 # ID Partner dari Shopee Developer Center
-PARTNER_ID = 2012002
+PARTNER_ID = 0  # GANTI DENGAN PARTNER ID ANDA
 
 # Kunci Partner dari Shopee Developer Center
-PARTNER_KEY = "shpk715045424a75484f6b7379476f4c44444d506b4d4b6f7a6d4f544a4f6a6d"
+PARTNER_KEY = "GANTI_DENGAN_PARTNER_KEY_ANDA"
 
 # Domain tempat aplikasi Anda berjalan (tanpa / di akhir)
 REDIRECT_URL_DOMAIN = "https://alvinnovendra2.pythonanywhere.com" 
@@ -146,8 +146,8 @@ def callback():
         flash("Respons token dari Shopee tidak lengkap.", 'danger')
         return redirect(url_for('dashboard'))
 
-    # PERBAIKAN: Menggunakan endpoint /api/v2/shop/get_profile sesuai saran
-    path_info = "/api/v2/shop/get_profile"
+    # DIKEMBALIKAN: Menggunakan endpoint /api/v2/shop/get_shop_info yang lebih standar
+    path_info = "/api/v2/shop/get_shop_info"
     info_data, error = call_shopee_api(path_info, shop_id=int(shop_id_str), access_token=access_token)
     shop_name = f"Toko {shop_id_str}"
     if error:
