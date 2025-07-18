@@ -229,6 +229,21 @@ def export_progress():
     
     return render_template('progress.html', export_data=export_data)
 
+@app.route('/api/progress_status')
+def progress_status():
+    """API endpoint to get current progress status."""
+    export_data = session.get('current_export')
+    if not export_data:
+        return {"error": "No export process found"}, 404
+    
+    return {
+        "status": export_data.get('status', 'unknown'),
+        "progress": export_data.get('progress', 0),
+        "current_step": export_data.get('current_step', ''),
+        "error": export_data.get('error'),
+        "data_count": len(export_data.get('data', []))
+    }
+
 @app.route('/start_chunked_export', methods=['POST'])
 def start_chunked_export():
     """Start the actual chunked export process."""
@@ -258,12 +273,14 @@ def process_returns_chunked(export_data, access_token):
     """Process returns data in small chunks."""
     export_data['status'] = 'processing'
     export_data['current_step'] = 'Mengambil daftar retur...'
+    export_data['progress'] = 5  # Start with 5%
     session.modified = True
     
     shop_id = export_data['shop_id']
     all_returns = []
     page_no = 1
     total_processed = 0
+    max_pages_estimate = 50  # Estimate max pages for progress calculation
     
     while True:
         return_body = {"page_no": page_no, "page_size": 5}  # Small batch size
@@ -271,29 +288,39 @@ def process_returns_chunked(export_data, access_token):
                                         shop_id=shop_id, access_token=access_token, body=return_body)
         
         if error:
+            app.logger.error(f"Returns API error: {error}")
             export_data['error'] = f"Gagal mengambil daftar retur: {error}"
             export_data['status'] = 'error'
             session.modified = True
             return
             
+        # Debug logging
+        app.logger.info(f"Returns page {page_no} response: {response}")
         return_list = response.get('response', {}).get('return', [])
+        app.logger.info(f"Found {len(return_list)} returns on page {page_no}")
+        
         if not return_list:
+            app.logger.info("No more returns found, breaking loop")
             break
             
         all_returns.extend(return_list)
         total_processed += len(return_list)
         
-        # Update progress
-        export_data['progress'] = min(90, (page_no * 5))  # Estimate progress
-        export_data['current_step'] = f'Memproses retur... {total_processed} data'
+        # Better progress calculation (5% start + 80% for data collection)
+        progress_pct = 5 + min(80, int((page_no / max_pages_estimate) * 80))
+        export_data['progress'] = progress_pct
+        export_data['current_step'] = f'Memproses retur... {total_processed} data (halaman {page_no})'
         session.modified = True
         
+        app.logger.info(f"Progress updated: {progress_pct}%, total processed: {total_processed}")
+        
         # Add delay to prevent rate limiting
-        time.sleep(1)
+        time.sleep(2)  # Increased delay
         page_no += 1
         
         # Safety limit
         if page_no > 200:  # Max 1000 records (200 * 5)
+            app.logger.info("Reached safety limit of 200 pages")
             break
     
     # Process the collected data

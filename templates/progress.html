@@ -148,34 +148,52 @@
         
         function startProgressPolling() {
             const pollInterval = setInterval(() => {
-                fetch('/export_progress')
-                .then(response => response.text())
-                .then(html => {
-                    // Parse the response to get updated progress data
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
-                    const newProgressBar = doc.getElementById('progressBar');
-                    const newStatusText = doc.getElementById('statusText');
+                fetch('/api/progress_status')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Progress update:', data); // Debug log
                     
-                    if (newProgressBar && newStatusText) {
-                        document.getElementById('progressBar').style.width = newProgressBar.style.width;
-                        document.getElementById('progressBar').textContent = newProgressBar.textContent;
-                        document.getElementById('statusText').innerHTML = newStatusText.innerHTML;
-                        
-                        // Check if completed
-                        if (newProgressBar.textContent.includes('100%') || 
-                            newStatusText.innerHTML.includes('✅') ||
-                            newStatusText.innerHTML.includes('❌')) {
-                            clearInterval(pollInterval);
-                            setTimeout(() => location.reload(), 2000);
-                        }
+                    if (data.error) {
+                        console.error('Progress error:', data.error);
+                        clearInterval(pollInterval);
+                        return;
+                    }
+                    
+                    // Update progress bar
+                    const progressBar = document.getElementById('progressBar');
+                    const statusText = document.getElementById('statusText');
+                    
+                    progressBar.style.width = data.progress + '%';
+                    progressBar.textContent = data.progress + '%';
+                    
+                    // Update status text based on status
+                    let statusHTML = '';
+                    if (data.status === 'processing') {
+                        statusHTML = '<div class="spinner-border spinner-border-sm text-primary" role="status"></div> ' + data.current_step;
+                    } else if (data.status === 'completed') {
+                        statusHTML = '<span class="completed-icon">✅</span> ' + data.current_step;
+                        clearInterval(pollInterval);
+                        setTimeout(() => location.reload(), 2000);
+                    } else if (data.status === 'error') {
+                        statusHTML = '<span class="error-icon">❌</span> Error: ' + data.error;
+                        clearInterval(pollInterval);
+                    } else {
+                        statusHTML = data.current_step;
+                    }
+                    
+                    statusText.innerHTML = statusHTML;
+                    
+                    // Auto-reload if completed or error
+                    if (data.status === 'completed' || data.status === 'error') {
+                        clearInterval(pollInterval);
+                        setTimeout(() => location.reload(), 3000);
                     }
                 })
                 .catch(error => {
                     console.error('Polling error:', error);
-                    clearInterval(pollInterval);
+                    // Don't clear interval on network errors, keep trying
                 });
-            }, 2000); // Poll every 2 seconds
+            }, 3000); // Poll every 3 seconds
         }
         
         // Auto-start if status is processing (page refresh case)
