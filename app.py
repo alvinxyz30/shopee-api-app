@@ -18,7 +18,7 @@ import io
 PARTNER_ID = 2012002
 
 # Kunci Partner dari Shopee Developer Center
-PARTNER_KEY = shpk715045424a75484f6b7379476f4c44444d506b4d4b6f7a6d4f544a4f6a6d
+PARTNER_KEY = "shpk715045424a75484f6b7379476f4c44444d506b4d4b6f7a6d4f544a4f6a6d"
 
 # Domain tempat aplikasi Anda berjalan (tanpa / di akhir)
 REDIRECT_URL_DOMAIN = "https://alvinnovendra2.pythonanywhere.com" 
