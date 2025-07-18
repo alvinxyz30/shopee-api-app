@@ -279,10 +279,12 @@ def export_data():
             page_no = 1
             while True:
                 return_body = {"page_no": page_no, "page_size": 50}
-                response, error = call_shopee_api("/api/v2/returns/get_return_list", shop_id=shop_id, access_token=access_token, body=return_body)
+                response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', shop_id=shop_id, access_token=access_token, body=return_body)
                 if error:
                     raise Exception(f"Gagal mengambil daftar retur: {error}")
                 
+                # Debug: Log API response
+                app.logger.info(f"Returns API response: {response}")
                 return_list = response.get('response', {}).get('return', [])
                 if not return_list:
                     break
@@ -291,9 +293,23 @@ def export_data():
                 page_no += 1
 
             if all_returns:
+                # Debug: Log returns count
+                app.logger.info(f"Found {len(all_returns)} returns")
                 processed_returns = []
                 for ret in all_returns:
-                    processed_item = {"Nomor Pesanan": ret.get('order_sn'), "Nomor Retur": ret.get('return_sn'), "Status": ret.get('status'), "Alasan": ret.get('reason'), "Tanggal Dibuat": datetime.fromtimestamp(ret.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('create_time') else None, "Metode Pembayaran": ret.get('payment_method'), "Resi Pengembalian": ret.get('logistics', {}).get('tracking_number'), "Total Pengembalian Dana": ret.get('refund_amount'), "Alasan Teks dari Pembeli": ret.get('text_reason')}
+                    processed_item = {
+                        "Nomor Pesanan": ret.get('order_sn'),
+                        "Nomor Retur": ret.get('return_sn'),
+                        "Status": ret.get('status'),
+                        "Alasan": ret.get('reason'),
+                        "Tanggal Dibuat": datetime.fromtimestamp(ret.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('create_time') else None,
+                        "Metode Pembayaran": ret.get('payment_method'),
+                        "Resi Pengembalian": ret.get('logistics', {}).get('tracking_number') if ret.get('logistics') else None,
+                        "Total Pengembalian Dana": ret.get('refund_amount'),
+                        "Alasan Teks dari Pembeli": ret.get('text_reason'),
+                        "User ID": ret.get('user_id'),
+                        "Tanggal Update": datetime.fromtimestamp(ret.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if ret.get('update_time') else None
+                    }
                     processed_returns.append(processed_item)
                 df = pd.DataFrame(processed_returns)
 
