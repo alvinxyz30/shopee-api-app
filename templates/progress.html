@@ -117,21 +117,31 @@
         let isProcessing = false;
         
         function startExport() {
-            if (isProcessing) return;
+            console.log('=== START EXPORT FUNCTION CALLED ===');
+            
+            if (isProcessing) {
+                console.log('Already processing, returning early');
+                return;
+            }
             
             isProcessing = true;
+            console.log('Setting isProcessing to true');
+            
             const startBtn = document.getElementById('startBtn');
             if (startBtn) {
                 startBtn.disabled = true;
                 startBtn.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"></div> Memulai...';
+                console.log('Start button disabled and text updated');
             }
             
             // Update UI to show processing started
             document.getElementById('progressBar').style.width = '1%';
             document.getElementById('progressBar').textContent = '1%';
             document.getElementById('statusText').innerHTML = '<div class="spinner-border spinner-border-sm text-primary" role="status"></div> Memulai export...';
+            console.log('UI updated to show 1% progress');
             
             // Start the background export process
+            console.log('About to call /start_chunked_export');
             fetch('/start_chunked_export', {
                 method: 'POST',
                 headers: {
@@ -140,34 +150,47 @@
                 body: JSON.stringify({})
             })
             .then(response => {
+                console.log('Fetch response received:', response);
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+                
                 if (!response.ok) {
-                    throw new Error('Network response was not ok');
+                    console.error('Response not ok, status:', response.status);
+                    throw new Error(`Network response was not ok: ${response.status}`);
                 }
                 return response.json();
             })
             .then(data => {
-                console.log('Export started:', data);
+                console.log('Export started successfully:', data);
                 if (data.error) {
+                    console.error('Server returned error:', data.error);
                     alert('Error: ' + data.error);
                     location.reload();
                 } else {
+                    console.log('Starting progress polling...');
                     // Start polling for progress updates immediately
                     startProgressPolling();
                 }
             })
             .catch(error => {
                 console.error('Error starting export:', error);
+                console.error('Full error object:', error);
                 alert('Terjadi kesalahan saat memulai export: ' + error.message);
                 location.reload();
             });
         }
         
         function startProgressPolling() {
+            console.log('=== STARTING PROGRESS POLLING ===');
             const pollInterval = setInterval(() => {
+                console.log('Polling for progress...');
                 fetch('/api/progress_status')
-                .then(response => response.json())
+                .then(response => {
+                    console.log('Progress response:', response);
+                    return response.json();
+                })
                 .then(data => {
-                    console.log('Progress update:', data); // Debug log
+                    console.log('Progress update received:', data);
                     
                     if (data.error) {
                         console.error('Progress error:', data.error);
@@ -179,6 +202,7 @@
                     const progressBar = document.getElementById('progressBar');
                     const statusText = document.getElementById('statusText');
                     
+                    console.log('Updating progress bar to:', data.progress + '%');
                     progressBar.style.width = data.progress + '%';
                     progressBar.textContent = data.progress + '%';
                     
@@ -186,21 +210,26 @@
                     let statusHTML = '';
                     if (data.status === 'processing') {
                         statusHTML = '<div class="spinner-border spinner-border-sm text-primary" role="status"></div> ' + data.current_step;
+                        console.log('Status: processing -', data.current_step);
                     } else if (data.status === 'completed') {
                         statusHTML = '<span class="completed-icon">✅</span> ' + data.current_step;
+                        console.log('Status: completed -', data.current_step);
                         clearInterval(pollInterval);
                         setTimeout(() => location.reload(), 2000);
                     } else if (data.status === 'error') {
                         statusHTML = '<span class="error-icon">❌</span> Error: ' + data.error;
+                        console.log('Status: error -', data.error);
                         clearInterval(pollInterval);
                     } else {
                         statusHTML = data.current_step;
+                        console.log('Status: unknown -', data.status, data.current_step);
                     }
                     
                     statusText.innerHTML = statusHTML;
                     
                     // Auto-reload if completed or error
                     if (data.status === 'completed' || data.status === 'error') {
+                        console.log('Process finished, clearing interval and reloading in 3 seconds');
                         clearInterval(pollInterval);
                         setTimeout(() => location.reload(), 3000);
                     }

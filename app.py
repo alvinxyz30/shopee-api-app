@@ -271,22 +271,39 @@ def progress_status():
 @app.route('/start_chunked_export', methods=['POST'])
 def start_chunked_export():
     """Start the actual chunked export process (SYNC VERSION for debugging)."""
+    print("=== START_CHUNKED_EXPORT CALLED ===")
+    app.logger.info("=== START_CHUNKED_EXPORT CALLED ===")
+    
     export_data = session.get('current_export')
+    print(f"Export data from session: {export_data}")
+    app.logger.info(f"Export data from session: {export_data}")
+    
     if not export_data:
+        print("ERROR: No export process found")
+        app.logger.error("ERROR: No export process found")
         return {"error": "No export process found"}, 400
     
     if export_data.get('status') == 'processing':
+        print("Already processing, returning existing progress")
+        app.logger.info("Already processing, returning existing progress")
         return {"status": "already_processing", "progress": export_data.get('progress', 0)}
     
     try:
         shop_data = session.get('shops', {}).get(export_data['shop_id'])
+        print(f"Shop data found: {shop_data is not None}")
+        app.logger.info(f"Shop data found: {shop_data is not None}")
+        
         if not shop_data:
+            print("ERROR: Shop data not found")
+            app.logger.error("ERROR: Shop data not found")
             export_data['error'] = "Shop data not found"
             export_data['status'] = 'error'
             session.modified = True
             return {"error": "Shop data not found"}
             
         access_token = shop_data['access_token']
+        print(f"Access token available: {access_token is not None}")
+        app.logger.info(f"Access token available: {access_token is not None}")
         
         # Process synchronously for debugging (no threading)
         export_data['status'] = 'processing'
@@ -294,30 +311,41 @@ def start_chunked_export():
         export_data['current_step'] = 'Memulai proses export...'
         session.modified = True
         
+        print(f"Starting export for data_type: {export_data['data_type']}")
         app.logger.info(f"Starting export for data_type: {export_data['data_type']}")
         
         if export_data['data_type'] == 'returns':
+            print("Calling process_returns_chunked...")
             app.logger.info("Calling process_returns_chunked...")
             process_returns_chunked(export_data, access_token)
+            print("process_returns_chunked completed")
             app.logger.info("process_returns_chunked completed")
         elif export_data['data_type'] == 'orders':
+            print("Calling process_orders_chunked...")
             app.logger.info("Calling process_orders_chunked...")
             process_orders_chunked(export_data, access_token)
         elif export_data['data_type'] == 'products':
+            print("Calling process_products_chunked...")
             app.logger.info("Calling process_products_chunked...")
             process_products_chunked(export_data, access_token)
         
+        print(f"Export completed with progress: {export_data.get('progress', 100)}")
         app.logger.info(f"Export completed with progress: {export_data.get('progress', 100)}")
         
         # Always return success status, even if there were API errors
         # The errors are handled in the processing functions and stored in session
         if export_data.get('status') == 'error':
+            print(f"Returning error status: {export_data.get('error')}")
+            app.logger.info(f"Returning error status: {export_data.get('error')}")
             return {"status": "error", "error": export_data.get('error')}
         else:
+            print(f"Returning completed status with progress: {export_data.get('progress', 100)}")
+            app.logger.info(f"Returning completed status with progress: {export_data.get('progress', 100)}")
             return {"status": "completed", "progress": export_data.get('progress', 100)}
             
     except Exception as e:
-        app.logger.error(f"Failed to start export: {e}")
+        print(f"EXCEPTION in start_chunked_export: {e}")
+        app.logger.error(f"EXCEPTION in start_chunked_export: {e}")
         export_data['error'] = str(e)
         export_data['status'] = 'error'
         session.modified = True
