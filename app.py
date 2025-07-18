@@ -741,8 +741,8 @@ def process_orders_chunked_global(export_id, access_token):
                 "page_size": 20,  # Larger page size for orders
                 "time_range_field": "create_time",
                 "time_from": int(chunk_start.timestamp()),
-                "time_to": int(chunk_end.timestamp()),
-                "order_status": "ALL"
+                "time_to": int(chunk_end.timestamp())
+                # Removed order_status parameter as "ALL" is not valid
             }
             
             response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
