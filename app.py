@@ -249,17 +249,37 @@ def test_order_detail_api():
     if not order_sn:
         return {"error": "No order_sn found in return"}
     
-    # Test order detail API
+    # Test multiple API variations
+    results = {}
+    
+    # Try 1: GET with order_sn_list as string
+    order_params1 = {"order_sn_list": order_sn}
+    response1, error1 = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
+                                      shop_id=shop_id, access_token=access_token, body=order_params1)
+    results["test1_get_string"] = {"response": response1, "error": error1}
+    
+    # Try 2: GET with order_sn_list as array
+    order_params2 = {"order_sn_list": [order_sn]}
+    response2, error2 = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
+                                      shop_id=shop_id, access_token=access_token, body=order_params2)
+    results["test2_get_array"] = {"response": response2, "error": error2}
+    
+    # Try 3: POST with body
     order_body = {"order_sn_list": [order_sn]}
-    order_response, order_error = call_shopee_api("/api/v2/order/get_order_detail", method='POST', 
-                                                shop_id=shop_id, access_token=access_token, body=order_body)
+    response3, error3 = call_shopee_api("/api/v2/order/get_order_detail", method='POST', 
+                                      shop_id=shop_id, access_token=access_token, body=order_body)
+    results["test3_post"] = {"response": response3, "error": error3}
+    
+    # Try 4: Alternative endpoint - get_order_list with specific order
+    order_list_params = {"order_sn_list": [order_sn]}
+    response4, error4 = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
+                                      shop_id=shop_id, access_token=access_token, body=order_list_params)
+    results["test4_order_list"] = {"response": response4, "error": error4}
     
     return {
         "shop_id": shop_id,
         "order_sn": order_sn,
-        "order_response": order_response,
-        "order_error": order_error,
-        "url_called": f"{BASE_URL}/api/v2/order/get_order_detail"
+        "api_tests": results
     }
 
 @app.route('/test_connection', methods=['GET', 'POST'])
