@@ -301,20 +301,19 @@ def test_order_detail_api():
     shop_id, shop_data = next(iter(shops.items()))
     access_token = shop_data['access_token']
     
-    # Get order from last month that likely has tracking number
+    # Get order from last 10 days (within 15 day limit)
     from datetime import datetime, timedelta
-    last_month = datetime.now() - timedelta(days=30)
-    last_month_start = int(last_month.replace(day=1).timestamp())
-    last_month_end = int((last_month.replace(day=28) + timedelta(days=4)).timestamp())
+    end_date = datetime.now() - timedelta(days=1)  # Yesterday
+    start_date = end_date - timedelta(days=10)  # 10 days ago
     
-    # Get orders from last month first
+    # Get orders from last 10 days
     order_body = {
-        "time_range_field": "create_time",
-        "time_from": last_month_start,
-        "time_to": last_month_end,
+        "time_range_field": "create_time", 
+        "time_from": int(start_date.timestamp()),
+        "time_to": int(end_date.timestamp()),
         "page_no": 1,
-        "page_size": 5,
-        "order_status": "COMPLETED"  # Only completed orders likely have tracking
+        "page_size": 10
+        # Remove order_status filter to get any orders
     }
     
     orders_response, orders_error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
@@ -325,10 +324,11 @@ def test_order_detail_api():
     
     order_list = orders_response.get('response', {}).get('order_list', [])
     if not order_list:
-        return {"error": "No completed orders found from last month"}
+        return {"error": "No orders found from last 10 days"}
     
-    # Use first completed order
+    # Use first order (any status)
     order_sn = order_list[0].get('order_sn')
+    order_status = order_list[0].get('order_status', 'UNKNOWN')
     
     # Test multiple API variations with proper optional fields
     results = {}
