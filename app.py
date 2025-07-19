@@ -615,13 +615,13 @@ def get_order_details(order_sn, shop_id, access_token):
             # Get order create time (tanggal order)
             order_create_time = order_detail.get('create_time')
             
-            # Get basic order info - tracking number not available in order detail API
+            # Get shipping info - tracking number is in booking_sn field
             shipping_info = {
-                "tracking_number": '',  # Not available in order detail API
-                "shipping_carrier": '',  # Not available in order detail API  
+                "tracking_number": order_detail.get('booking_sn', ''),  # This is the tracking number!
+                "shipping_carrier": order_detail.get('shipping_carrier', ''),  # Available with proper fields
                 "order_status": order_detail.get('order_status', ''),
-                "booking_sn": order_detail.get('booking_sn', ''),  # Maybe this is tracking?
                 "ship_by_date": order_detail.get('ship_by_date', ''),
+                "advance_package": order_detail.get('advance_package', False),
             }
             
             # Debug: print all keys to see available fields
@@ -694,7 +694,7 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
                 "Nomor Pesanan": item.get('order_sn'),
                 "Nomor Retur": item.get('return_sn'),
                 "No Resi Retur": item.get('tracking_number', ''),  # Return tracking from returns API
-                "No Resi Pengiriman": order_details['shipping_info'].get('booking_sn', ''),  # Use booking_sn as tracking
+                "No Resi Pengiriman": order_details['shipping_info'].get('tracking_number', ''),  # booking_sn is the tracking number
                 "Tanggal Order": order_create_time,  # From order API
                 "Tanggal Retur Diajukan": return_create_time,  # Return create time
                 "Payment Method": order_details['payment_method'],  # COD vs Online Payment
