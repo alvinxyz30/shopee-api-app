@@ -778,10 +778,27 @@ def get_order_details(order_sn, shop_id, access_token):
             # Get order create time (tanggal order)
             order_create_time = order_detail.get('create_time')
             
-            # Get shipping info - tracking number is in booking_sn field
+            # Get REAL tracking number from logistics API
+            real_tracking_number = ""
+            try:
+                tracking_params = {"order_sn": order_sn}
+                tracking_response, tracking_error = call_shopee_api("/api/v2/logistics/get_tracking_number", method='GET', 
+                                                                  shop_id=shop_id, access_token=access_token, body=tracking_params, max_retries=1)
+                
+                if tracking_response and not tracking_error:
+                    real_tracking_number = tracking_response.get('response', {}).get('tracking_number', '')
+                    app.logger.info(f"Found real tracking number for {order_sn}: {real_tracking_number}")
+                else:
+                    app.logger.warning(f"Could not get tracking number for {order_sn}: {tracking_error}")
+                    
+            except Exception as tracking_ex:
+                app.logger.warning(f"Tracking API error for {order_sn}: {tracking_ex}")
+            
+            # Get shipping info with REAL tracking number
             shipping_info = {
-                "tracking_number": order_detail.get('booking_sn', ''),  # This is the tracking number!
-                "shipping_carrier": order_detail.get('shipping_carrier', ''),  # Available with proper fields
+                "tracking_number": real_tracking_number,  # REAL SPX tracking number (SPXID format)
+                "package_number": order_detail.get('booking_sn', ''),  # Internal package number (fallback)
+                "shipping_carrier": order_detail.get('shipping_carrier', ''),
                 "order_status": order_detail.get('order_status', ''),
                 "ship_by_date": order_detail.get('ship_by_date', ''),
                 "advance_package": order_detail.get('advance_package', False),
