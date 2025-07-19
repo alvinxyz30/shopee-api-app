@@ -236,6 +236,97 @@ def test_returns_api():
         "url_called": f"{BASE_URL}/api/v2/returns/get_return_list"
     }
 
+@app.route('/test_real_tracking_api')
+def test_real_tracking_api():
+    """Test to find actual SPX tracking numbers that can be tracked on SPX website."""
+    shops = session.get('shops', {})
+    if not shops:
+        return {"error": "No shops found in session"}, 400
+    
+    # Get first shop for testing
+    shop_id, shop_data = next(iter(shops.items()))
+    access_token = shop_data['access_token']
+    
+    # Test order SNs - focus on finding real tracking numbers
+    test_orders = [
+        "250426A7B1H300",
+        "250406HNTVAXTC", 
+        "250426A72EV9TV",
+        "250422VSVX309M",
+        "2504256KHEKDY2"
+    ]
+    
+    results = {}
+    
+    for order_sn in test_orders:
+        print(f"Testing tracking for order: {order_sn}")
+        order_result = {}
+        
+        try:
+            # Method 1: Get logistics tracking info - cari di description
+            logistics_params = {"order_sn": order_sn}
+            logistics_response, logistics_error = call_shopee_api("/api/v2/logistics/get_tracking_info", method='GET', 
+                                                                shop_id=shop_id, access_token=access_token, body=logistics_params)
+            
+            extracted_tracking = []
+            if logistics_response and not logistics_error:
+                tracking_info = logistics_response.get('response', {}).get('tracking_info', [])
+                
+                # Scan descriptions for tracking number patterns
+                for info in tracking_info:
+                    description = info.get('description', '')
+                    
+                    # Look for SPX tracking patterns in description
+                    import re
+                    # SPX patterns: SPXID123456789, ID123456789000, etc
+                    spx_patterns = [
+                        r'SPXID\d+',           # SPXID followed by digits
+                        r'ID\d{10,15}',        # ID followed by 10-15 digits  
+                        r'SPX\d{10,15}',       # SPX followed by digits
+                        r'\b\d{10,15}ID\b',    # 10-15 digits followed by ID
+                        r'resi[:\s]+([A-Z0-9]{10,20})',  # "resi: ABC123456"
+                        r'tracking[:\s]+([A-Z0-9]{10,20})',  # "tracking: ABC123456"
+                        r'awb[:\s]+([A-Z0-9]{10,20})'   # "awb: ABC123456"
+                    ]
+                    
+                    for pattern in spx_patterns:
+                        matches = re.findall(pattern, description, re.IGNORECASE)
+                        if matches:
+                            extracted_tracking.extend(matches)
+                
+                order_result["logistics_tracking"] = {
+                    "total_updates": len(tracking_info),
+                    "extracted_numbers": list(set(extracted_tracking)),  # Remove duplicates
+                    "logistics_status": logistics_response.get('response', {}).get('logistics_status', ''),
+                    "sample_descriptions": [info.get('description', '')[:100] for info in tracking_info[:3]]
+                }
+            
+            # Method 2: Alternative logistics endpoints
+            # Try get_tracking_number endpoint
+            tracking_params = {"order_sn": order_sn}
+            tracking_response, tracking_error = call_shopee_api("/api/v2/logistics/get_tracking_number", method='GET', 
+                                                              shop_id=shop_id, access_token=access_token, body=tracking_params)
+            
+            if tracking_response and not tracking_error:
+                order_result["tracking_number_api"] = tracking_response.get('response', {})
+            else:
+                order_result["tracking_number_api"] = {"error": tracking_error}
+            
+            results[order_sn] = order_result
+            
+        except Exception as e:
+            results[order_sn] = {"error": str(e)}
+        
+        # Rate limiting
+        import time
+        time.sleep(0.3)
+    
+    return {
+        "shop_id": shop_id,
+        "tracking_analysis": results,
+        "note": "Looking for real SPX tracking numbers that can be tracked on SPX website"
+    }
+
 @app.route('/test_logistics_api')
 def test_logistics_api():
     """Test logistics API to get tracking number."""
