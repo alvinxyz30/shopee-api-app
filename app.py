@@ -589,15 +589,39 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
             order_create_time = datetime.fromtimestamp(order_details['create_time']).strftime('%Y-%m-%d %H:%M:%S') if order_details['create_time'] else None
             return_update_time = datetime.fromtimestamp(item.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('update_time') else None
             
+            # Extract SKU codes from item array
+            sku_codes = []
+            item_names = []
+            items_data = item.get('item', [])
+            for product_item in items_data:
+                # Get both item_sku and variation_sku
+                item_sku = product_item.get('item_sku', '')
+                variation_sku = product_item.get('variation_sku', '')
+                item_name = product_item.get('name', '')
+                
+                # Use variation_sku if available, otherwise item_sku
+                if variation_sku:
+                    sku_codes.append(variation_sku)
+                elif item_sku:
+                    sku_codes.append(item_sku)
+                
+                if item_name:
+                    item_names.append(item_name)
+            
+            # Join multiple SKUs if there are multiple items
+            sku_code_str = ' | '.join(filter(None, sku_codes)) if sku_codes else ''
+            item_name_str = ' | '.join(item_names) if item_names else ''
+            
             processed_item = {
                 "Nomor Pesanan": item.get('order_sn'),
                 "Nomor Retur": item.get('return_sn'),
-                "No Resi Retur": item.get('return_tracking_number', item.get('tracking_number', '')),  # Return tracking
+                "No Resi Retur": item.get('tracking_number', ''),  # Return tracking from returns API
                 "No Resi Pengiriman": order_details['shipping_info'].get('tracking_number', ''),  # Order shipping tracking
-                "Tanggal Order": order_create_time,  # NEW: From order API
-                "Tanggal Retur Diajukan": return_create_time,  # NEW: Return create time
-                "Payment Method": order_details['payment_method'],  # NEW: Fixed payment method
-                "SKU Code": '',  # NEW: Will be populated from item details if available
+                "Tanggal Order": order_create_time,  # From order API
+                "Tanggal Retur Diajukan": return_create_time,  # Return create time
+                "Payment Method": order_details['payment_method'],  # COD vs Online Payment
+                "SKU Code": sku_code_str,  # NEW: Extracted from item array
+                "Nama Produk": item_name_str,  # BONUS: Product names
                 "Status": item.get('status'),
                 "Alasan": item.get('reason'),
                 "Mata Uang": item.get('currency'),
