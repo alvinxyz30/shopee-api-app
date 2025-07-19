@@ -222,6 +222,46 @@ def test_returns_api():
         "url_called": f"{BASE_URL}/api/v2/returns/get_return_list"
     }
 
+@app.route('/test_order_detail_api')
+def test_order_detail_api():
+    """Test order detail API to check payment method fields."""
+    shops = session.get('shops', {})
+    if not shops:
+        return {"error": "No shops found in session"}, 400
+    
+    # Get first shop for testing
+    shop_id, shop_data = next(iter(shops.items()))
+    access_token = shop_data['access_token']
+    
+    # First get a return to get order_sn
+    return_body = {"page_no": 1, "page_size": 1}
+    returns_response, returns_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                    shop_id=shop_id, access_token=access_token, body=return_body)
+    
+    if returns_error or not returns_response:
+        return {"error": f"Failed to get returns: {returns_error}"}
+    
+    return_list = returns_response.get('response', {}).get('return', [])
+    if not return_list:
+        return {"error": "No returns found to test with"}
+    
+    order_sn = return_list[0].get('order_sn')
+    if not order_sn:
+        return {"error": "No order_sn found in return"}
+    
+    # Test order detail API
+    order_body = {"order_sn_list": [order_sn]}
+    order_response, order_error = call_shopee_api("/api/v2/order/get_order_detail", method='POST', 
+                                                shop_id=shop_id, access_token=access_token, body=order_body)
+    
+    return {
+        "shop_id": shop_id,
+        "order_sn": order_sn,
+        "order_response": order_response,
+        "order_error": order_error,
+        "url_called": f"{BASE_URL}/api/v2/order/get_order_detail"
+    }
+
 @app.route('/test_connection', methods=['GET', 'POST'])
 def test_connection():
     """Test if server can receive requests."""
@@ -445,31 +485,45 @@ def load_checkpoint(export_id):
 def get_payment_method_from_order(order_sn, shop_id, access_token):
     """Lookup payment method dari orders API menggunakan order_sn"""
     try:
-        # Call orders API untuk mendapatkan payment method
+        # Call orders API untuk mendapatkan payment method - test basic first
         order_body = {
-            "order_sn_list": [order_sn],
-            "response_optional_fields": ["payment_method"]
+            "order_sn_list": [order_sn]
         }
         
         response, error = call_shopee_api("/api/v2/order/get_order_detail", method='POST', 
-                                        shop_id=shop_id, access_token=access_token, body=order_body)
+                                        shop_id=shop_id, access_token=access_token, body=order_body, max_retries=2)
         
         if error:
             app.logger.warning(f"Failed to get payment method for order {order_sn}: {error}")
-            return None
+            return "API Error"
             
+        # Debug full response
+        app.logger.info(f"Full order detail response for {order_sn}: {response}")
+        
         order_list = response.get('response', {}).get('order_list', [])
         if order_list and len(order_list) > 0:
-            payment_method = order_list[0].get('payment_method')
+            order_detail = order_list[0]
+            payment_method = order_detail.get('payment_method')
+            
+            # If payment_method is empty, try alternative fields
+            if not payment_method:
+                # Check if there are other payment-related fields
+                for key in order_detail.keys():
+                    if 'payment' in key.lower():
+                        app.logger.info(f"Found payment field {key}: {order_detail[key]}")
+                        if order_detail[key]:
+                            payment_method = f"{key}: {order_detail[key]}"
+                            break
+            
             app.logger.info(f"Payment method for order {order_sn}: {payment_method}")
-            return payment_method
+            return payment_method or "Tidak tersedia"
         else:
             app.logger.warning(f"No order found for order_sn: {order_sn}")
-            return None
+            return "Order tidak ditemukan"
             
     except Exception as e:
         app.logger.error(f"Exception getting payment method for order {order_sn}: {e}")
-        return None
+        return f"Error: {str(e)}"
 
 def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_token=None):
     """Process data chunk dan return format Excel, lalu clear memory"""
@@ -485,8 +539,11 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
             payment_method = None
             if order_sn and shop_id and access_token:
                 payment_method = get_payment_method_from_order(order_sn, shop_id, access_token)
-                # Add small delay to respect rate limiting
-                time.sleep(0.1)
+                # Debug logging
+                app.logger.info(f"DEBUG: order_sn={order_sn}, payment_method={payment_method}")
+                print(f"DEBUG: order_sn={order_sn}, payment_method={payment_method}")
+                # Add delay to respect rate limiting
+                time.sleep(0.2)
             
             processed_item = {
                 "Nomor Pesanan": item.get('order_sn'),
@@ -575,14 +632,16 @@ def process_returns_chunked_global(export_id, access_token):
         while True:
             app.logger.info(f"=== CHUNK {chunk_index + 1} PAGE {page_no} ===")
             
-            # Update progress dalam chunk
-            page_progress = (page_no / max_pages_estimate) * (75.0 / len(date_chunks))
-            current_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0 + page_progress
+            # Update progress dalam chunk (fixed calculation)
+            chunk_base_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0
+            chunk_size_progress = 75.0 / len(date_chunks)
+            page_progress = min(page_no / max_pages_estimate, 0.9) * chunk_size_progress
+            current_progress = chunk_base_progress + page_progress
             export_data['progress'] = round(min(85.0, current_progress), 1)
             export_data['current_step'] = f'Chunk {chunk_index + 1}/{len(date_chunks)} - Halaman {page_no}...'
             
-            # Save checkpoint every 25 pages
-            if page_no % 25 == 0:
+            # Save checkpoint every 10 pages (more frequent)
+            if page_no % 10 == 0:
                 checkpoint_data = {
                     'chunk_index': chunk_index,
                     'page_no': page_no,
@@ -635,8 +694,8 @@ def process_returns_chunked_global(export_id, access_token):
             app.logger.info(f"Chunk {chunk_index + 1} progress: {current_progress:.1f}%, total processed: {total_processed}")
             print(f"Total processed so far: {total_processed}")
             
-            # Add delay to respect rate limit
-            time.sleep(0.15)  # Respect rate limit
+            # Add delay to respect rate limit (increased for stability)
+            time.sleep(0.5)  # Increased delay for better stability
             page_no += 1
             
             # Safety limit per chunk (adjusted for page_size=1)
@@ -729,9 +788,11 @@ def process_orders_chunked_global(export_id, access_token):
         while True:
             app.logger.info(f"=== ORDERS CHUNK {chunk_index + 1} PAGE {page_no} ===")
             
-            # Update progress dalam chunk
-            page_progress = (page_no / max_pages_estimate) * (75.0 / len(date_chunks))
-            current_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0 + page_progress
+            # Update progress dalam chunk (fixed calculation)
+            chunk_base_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0
+            chunk_size_progress = 75.0 / len(date_chunks)
+            page_progress = min(page_no / max_pages_estimate, 0.9) * chunk_size_progress
+            current_progress = chunk_base_progress + page_progress
             export_data['progress'] = round(min(85.0, current_progress), 1)
             export_data['current_step'] = f'Orders Chunk {chunk_index + 1}/{len(date_chunks)} - Halaman {page_no}...'
             
