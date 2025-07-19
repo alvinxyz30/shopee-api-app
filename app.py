@@ -325,6 +325,8 @@ def test_order_detail_api():
         print(f"Analyzing order: {order_sn}")
         order_analysis = {}
         
+        try:
+        
         # Test 1: Enhanced order detail with package_list
         enhanced_params = {
             "order_sn_list": order_sn,
@@ -395,7 +397,18 @@ def test_order_detail_api():
         else:
             order_analysis["summary"]["best_tracking_reference"] = "No tracking available"
         
-        analysis_results[order_sn] = order_analysis
+            analysis_results[order_sn] = order_analysis
+            
+        except Exception as e:
+            print(f"Error analyzing order {order_sn}: {e}")
+            analysis_results[order_sn] = {
+                "error": str(e),
+                "summary": {
+                    "has_package_number": False,
+                    "has_tracking_history": False,
+                    "best_tracking_reference": "Error occurred"
+                }
+            }
         
         # Delay to avoid rate limiting
         import time
@@ -406,11 +419,18 @@ def test_order_detail_api():
     orders_with_package = len([r for r in analysis_results.values() if r.get('summary', {}).get('has_package_number')])
     orders_with_tracking = len([r for r in analysis_results.values() if r.get('summary', {}).get('has_tracking_history')])
     
+    # Avoid division by zero
+    if total_orders > 0:
+        success_percentage = round(orders_with_package/total_orders*100, 1)
+        success_rate = f"{orders_with_package}/{total_orders} ({success_percentage}% have package numbers)"
+    else:
+        success_rate = "0/0 (No orders analyzed)"
+    
     overall_summary = {
         "total_analyzed": total_orders,
         "with_package_number": orders_with_package,
         "with_tracking_history": orders_with_tracking,
-        "success_rate": f"{orders_with_package}/{total_orders} ({round(orders_with_package/total_orders*100, 1)}% have package numbers)"
+        "success_rate": success_rate
     }
     
     return {
