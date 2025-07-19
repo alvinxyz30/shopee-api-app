@@ -847,15 +847,17 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
             order_create_time = datetime.fromtimestamp(order_details['create_time']).strftime('%Y-%m-%d %H:%M:%S') if order_details['create_time'] else None
             return_update_time = datetime.fromtimestamp(item.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('update_time') else None
             
-            # Extract SKU codes from item array
+            # Extract SKU codes, item names, dan quantities dari item array
             sku_codes = []
             item_names = []
+            quantities = []
             items_data = item.get('item', [])
             for product_item in items_data:
                 # Get both item_sku and variation_sku
                 item_sku = product_item.get('item_sku', '')
                 variation_sku = product_item.get('variation_sku', '')
                 item_name = product_item.get('name', '')
+                quantity = product_item.get('amount', 0)  # Get quantity
                 
                 # Use variation_sku if available, otherwise item_sku
                 if variation_sku:
@@ -865,10 +867,14 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
                 
                 if item_name:
                     item_names.append(item_name)
+                
+                if quantity:
+                    quantities.append(str(quantity))
             
-            # Join multiple SKUs if there are multiple items
+            # Join multiple SKUs, names, and quantities if there are multiple items
             sku_code_str = ' | '.join(filter(None, sku_codes)) if sku_codes else ''
             item_name_str = ' | '.join(item_names) if item_names else ''
+            quantity_str = ' | '.join(quantities) if quantities else '0'
             
             processed_item = {
                 "Nomor Pesanan": item.get('order_sn'),
@@ -880,6 +886,7 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
                 "Payment Method": order_details['payment_method'],  # COD vs Online Payment
                 "SKU Code": sku_code_str,  # NEW: Extracted from item array
                 "Nama Produk": item_name_str,  # BONUS: Product names
+                "Qty": quantity_str,  # NEW: Product quantities
                 "Status": item.get('status'),
                 "Alasan": item.get('reason'),
                 "Mata Uang": item.get('currency'),
