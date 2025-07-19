@@ -301,35 +301,67 @@ def test_order_detail_api():
     shop_id, shop_data = next(iter(shops.items()))
     access_token = shop_data['access_token']
     
-    # Test specific order SN
-    order_sn = "2507011RYQB0Y8"  # User requested specific order
+    # Get order from last month that likely has tracking number
+    from datetime import datetime, timedelta
+    last_month = datetime.now() - timedelta(days=30)
+    last_month_start = int(last_month.replace(day=1).timestamp())
+    last_month_end = int((last_month.replace(day=28) + timedelta(days=4)).timestamp())
     
-    # Test multiple API variations
+    # Get orders from last month first
+    order_body = {
+        "time_range_field": "create_time",
+        "time_from": last_month_start,
+        "time_to": last_month_end,
+        "page_no": 1,
+        "page_size": 5,
+        "order_status": "COMPLETED"  # Only completed orders likely have tracking
+    }
+    
+    orders_response, orders_error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
+                                                   shop_id=shop_id, access_token=access_token, body=order_body)
+    
+    if orders_error or not orders_response:
+        return {"error": f"Failed to get orders: {orders_error}"}
+    
+    order_list = orders_response.get('response', {}).get('order_list', [])
+    if not order_list:
+        return {"error": "No completed orders found from last month"}
+    
+    # Use first completed order
+    order_sn = order_list[0].get('order_sn')
+    
+    # Test multiple API variations with proper optional fields
     results = {}
     
-    # Try 1: GET with order_sn_list as string
-    order_params1 = {"order_sn_list": order_sn}
+    # Try 1: GET with proper response_optional_fields
+    order_params1 = {
+        "order_sn_list": order_sn,
+        "response_optional_fields": "tracking_number,logistics_status,shipping_carrier,logistics_info"
+    }
     response1, error1 = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
                                       shop_id=shop_id, access_token=access_token, body=order_params1)
-    results["test1_get_string"] = {"response": response1, "error": error1}
+    results["test1_with_optional_fields"] = {"response": response1, "error": error1}
     
-    # Try 2: GET with order_sn_list as array
-    order_params2 = {"order_sn_list": [order_sn]}
+    # Try 2: GET with array format for optional fields
+    order_params2 = {
+        "order_sn_list": [order_sn],
+        "response_optional_fields": ["tracking_number", "logistics_status", "shipping_carrier", "logistics_info"]
+    }
     response2, error2 = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
                                       shop_id=shop_id, access_token=access_token, body=order_params2)
-    results["test2_get_array"] = {"response": response2, "error": error2}
+    results["test2_array_optional_fields"] = {"response": response2, "error": error2}
     
-    # Try 3: POST with body
-    order_body = {"order_sn_list": [order_sn]}
-    response3, error3 = call_shopee_api("/api/v2/order/get_order_detail", method='POST', 
-                                      shop_id=shop_id, access_token=access_token, body=order_body)
-    results["test3_post"] = {"response": response3, "error": error3}
+    # Try 3: logistics.get_tracking_info API (as per reference)
+    tracking_body = {"order_sn": order_sn}
+    tracking_response, tracking_error = call_shopee_api("/api/v2/logistics/get_tracking_info", method='GET', 
+                                                       shop_id=shop_id, access_token=access_token, body=tracking_body)
+    results["test3_logistics_tracking_info"] = {"response": tracking_response, "error": tracking_error}
     
-    # Try 4: Alternative endpoint - get_order_list with specific order
-    order_list_params = {"order_sn_list": [order_sn]}
-    response4, error4 = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
-                                      shop_id=shop_id, access_token=access_token, body=order_list_params)
-    results["test4_order_list"] = {"response": response4, "error": error4}
+    # Try 4: Basic order detail without optional fields (for comparison)
+    order_params4 = {"order_sn_list": order_sn}
+    response4, error4 = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
+                                      shop_id=shop_id, access_token=access_token, body=order_params4)
+    results["test4_basic_order_detail"] = {"response": response4, "error": error4}
     
     return {
         "shop_id": shop_id,
