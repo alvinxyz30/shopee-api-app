@@ -236,6 +236,54 @@ def test_returns_api():
         "url_called": f"{BASE_URL}/api/v2/returns/get_return_list"
     }
 
+@app.route('/test_logistics_api')
+def test_logistics_api():
+    """Test logistics API to get tracking number."""
+    shops = session.get('shops', {})
+    if not shops:
+        return {"error": "No shops found in session"}, 400
+    
+    # Get first shop for testing
+    shop_id, shop_data = next(iter(shops.items()))
+    access_token = shop_data['access_token']
+    
+    # First get a return to get order_sn
+    return_body = {"page_no": 1, "page_size": 1}
+    returns_response, returns_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                    shop_id=shop_id, access_token=access_token, body=return_body)
+    
+    if returns_error or not returns_response:
+        return {"error": f"Failed to get returns: {returns_error}"}
+    
+    return_list = returns_response.get('response', {}).get('return', [])
+    if not return_list:
+        return {"error": "No returns found to test with"}
+    
+    order_sn = return_list[0].get('order_sn')
+    if not order_sn:
+        return {"error": "No order_sn found in return"}
+    
+    # Test logistics APIs
+    results = {}
+    
+    # Try logistics tracking
+    tracking_body = {"order_sn_list": [order_sn]}
+    tracking_response, tracking_error = call_shopee_api("/api/v2/logistics/get_tracking_number", method='GET', 
+                                                      shop_id=shop_id, access_token=access_token, body=tracking_body)
+    results["logistics_tracking"] = {"response": tracking_response, "error": tracking_error}
+    
+    # Try shipping document
+    shipping_body = {"order_sn_list": [order_sn]}
+    shipping_response, shipping_error = call_shopee_api("/api/v2/logistics/get_shipping_document_parameter", method='GET', 
+                                                      shop_id=shop_id, access_token=access_token, body=shipping_body)
+    results["shipping_document"] = {"response": shipping_response, "error": shipping_error}
+    
+    return {
+        "shop_id": shop_id,
+        "order_sn": order_sn,
+        "logistics_tests": results
+    }
+
 @app.route('/test_order_detail_api')
 def test_order_detail_api():
     """Test order detail API to check payment method fields."""
@@ -542,13 +590,13 @@ def get_order_details(order_sn, shop_id, access_token):
             # Get order create time (tanggal order)
             order_create_time = order_detail.get('create_time')
             
-            # Get shipping info for tracking number - check all possible fields
+            # Get basic order info - tracking number not available in order detail API
             shipping_info = {
-                "tracking_number": order_detail.get('tracking_number', ''),
-                "shipping_carrier": order_detail.get('shipping_carrier', ''),
+                "tracking_number": '',  # Not available in order detail API
+                "shipping_carrier": '',  # Not available in order detail API  
                 "order_status": order_detail.get('order_status', ''),
-                "logistics_status": order_detail.get('logistics_status', ''),
-                "shipping_confirm_time": order_detail.get('shipping_confirm_time', ''),
+                "booking_sn": order_detail.get('booking_sn', ''),  # Maybe this is tracking?
+                "ship_by_date": order_detail.get('ship_by_date', ''),
             }
             
             # Debug: print all keys to see available fields
@@ -621,7 +669,7 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
                 "Nomor Pesanan": item.get('order_sn'),
                 "Nomor Retur": item.get('return_sn'),
                 "No Resi Retur": item.get('tracking_number', ''),  # Return tracking from returns API
-                "No Resi Pengiriman": order_details['shipping_info'].get('tracking_number', ''),  # Order shipping tracking
+                "No Resi Pengiriman": order_details['shipping_info'].get('booking_sn', ''),  # Use booking_sn as tracking
                 "Tanggal Order": order_create_time,  # From order API
                 "Tanggal Retur Diajukan": return_create_time,  # Return create time
                 "Payment Method": order_details['payment_method'],  # COD vs Online Payment
