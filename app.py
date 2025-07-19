@@ -542,14 +542,19 @@ def get_order_details(order_sn, shop_id, access_token):
             # Get order create time (tanggal order)
             order_create_time = order_detail.get('create_time')
             
-            # Get shipping info for tracking number
+            # Get shipping info for tracking number - check all possible fields
             shipping_info = {
                 "tracking_number": order_detail.get('tracking_number', ''),
                 "shipping_carrier": order_detail.get('shipping_carrier', ''),
-                "order_status": order_detail.get('order_status', '')
+                "order_status": order_detail.get('order_status', ''),
+                "logistics_status": order_detail.get('logistics_status', ''),
+                "shipping_confirm_time": order_detail.get('shipping_confirm_time', ''),
             }
             
-            app.logger.info(f"Order details for {order_sn}: payment={payment_method}, create_time={order_create_time}")
+            # Debug: print all keys to see available fields
+            app.logger.info(f"Order detail fields available: {list(order_detail.keys())}")
+            app.logger.info(f"Order details for {order_sn}: payment={payment_method}, shipping_info={shipping_info}")
+            
             return {
                 "payment_method": payment_method,
                 "create_time": order_create_time,
