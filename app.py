@@ -301,21 +301,8 @@ def test_order_detail_api():
     shop_id, shop_data = next(iter(shops.items()))
     access_token = shop_data['access_token']
     
-    # First get a return to get order_sn
-    return_body = {"page_no": 1, "page_size": 1}
-    returns_response, returns_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
-                                                    shop_id=shop_id, access_token=access_token, body=return_body)
-    
-    if returns_error or not returns_response:
-        return {"error": f"Failed to get returns: {returns_error}"}
-    
-    return_list = returns_response.get('response', {}).get('return', [])
-    if not return_list:
-        return {"error": "No returns found to test with"}
-    
-    order_sn = return_list[0].get('order_sn')
-    if not order_sn:
-        return {"error": "No order_sn found in return"}
+    # Test specific order SN
+    order_sn = "2507011RYQB0Y8"  # User requested specific order
     
     # Test multiple API variations
     results = {}
