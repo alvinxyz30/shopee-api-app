@@ -505,38 +505,32 @@ def load_checkpoint(export_id):
 def get_payment_method_from_order(order_sn, shop_id, access_token):
     """Lookup payment method dari orders API menggunakan order_sn"""
     try:
-        # Call orders API untuk mendapatkan payment method - test basic first
-        order_body = {
-            "order_sn_list": [order_sn]
+        # Call orders API menggunakan GET method yang benar
+        order_params = {
+            "order_sn_list": order_sn  # String format works
         }
         
-        response, error = call_shopee_api("/api/v2/order/get_order_detail", method='POST', 
-                                        shop_id=shop_id, access_token=access_token, body=order_body, max_retries=2)
+        response, error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=order_params, max_retries=2)
         
         if error:
             app.logger.warning(f"Failed to get payment method for order {order_sn}: {error}")
             return "API Error"
             
-        # Debug full response
-        app.logger.info(f"Full order detail response for {order_sn}: {response}")
-        
         order_list = response.get('response', {}).get('order_list', [])
         if order_list and len(order_list) > 0:
             order_detail = order_list[0]
-            payment_method = order_detail.get('payment_method')
             
-            # If payment_method is empty, try alternative fields
-            if not payment_method:
-                # Check if there are other payment-related fields
-                for key in order_detail.keys():
-                    if 'payment' in key.lower():
-                        app.logger.info(f"Found payment field {key}: {order_detail[key]}")
-                        if order_detail[key]:
-                            payment_method = f"{key}: {order_detail[key]}"
-                            break
+            # Check COD field (Cash on Delivery)
+            is_cod = order_detail.get('cod', False)
+            if is_cod:
+                payment_method = "COD (Cash on Delivery)"
+            else:
+                # If not COD, assume online payment
+                payment_method = "Online Payment"
             
-            app.logger.info(f"Payment method for order {order_sn}: {payment_method}")
-            return payment_method or "Tidak tersedia"
+            app.logger.info(f"Payment method for order {order_sn}: {payment_method} (COD: {is_cod})")
+            return payment_method
         else:
             app.logger.warning(f"No order found for order_sn: {order_sn}")
             return "Order tidak ditemukan"
