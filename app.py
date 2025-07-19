@@ -301,21 +301,17 @@ def test_order_detail_api():
     shop_id, shop_data = next(iter(shops.items()))
     access_token = shop_data['access_token']
     
-    # Test specific order SNs provided by user
+    # Test new batch of order SNs provided by user
     test_order_sns = [
-        "250526T703Q7WJ",
-        "2505306YU8DK5U", 
-        "250526TYKU6HTA",
-        "250525R7KG03CU",
-        "2505306TVYGBVV",
-        "2505307W8SW31U",
-        "250526TYKU6HTA",  # duplicate
-        "2505295BT3R766",
-        "250525SMM7EJ97",
-        "250523JMN3AH8S",
-        "2505281S171N93",
-        "250525RKDDJTAC",
-        "2505319AQS6KV0"
+        "250426A7B1H300",
+        "250406HNTVAXTC", 
+        "250426A72EV9TV",
+        "250422VSVX309M",
+        "2504256KHEKDY2",
+        "250426A20MBDHG",
+        "2504269X2BQ11V",
+        "250427C5GTG0B4",
+        "2504258DTXS4P6"
     ]
     
     # Remove duplicates and keep order
@@ -324,96 +320,104 @@ def test_order_detail_api():
         if sn not in unique_order_sns:
             unique_order_sns.append(sn)
     
-    # Test specific order for detailed tracking analysis
-    test_order_sn = "250523JMN3AH8S"  # Pick one order for detailed testing
-    
-    detailed_results = {}
-    
-    # Test 1: Basic order detail (current method)
-    basic_params = {"order_sn_list": test_order_sn}
-    basic_response, basic_error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
-                                                shop_id=shop_id, access_token=access_token, body=basic_params)
-    detailed_results["basic_order_detail"] = {"response": basic_response, "error": basic_error}
-    
-    # Test 2: With response_optional_fields (string format)
-    enhanced_params = {
-        "order_sn_list": test_order_sn,
-        "response_optional_fields": "tracking_number,logistics_status,shipping_carrier,logistics_info,package_list"
-    }
-    enhanced_response, enhanced_error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
-                                                      shop_id=shop_id, access_token=access_token, body=enhanced_params)
-    detailed_results["enhanced_order_detail"] = {"response": enhanced_response, "error": enhanced_error}
-    
-    # Test 3: With response_optional_fields (array format)
-    array_params = {
-        "order_sn_list": [test_order_sn],
-        "response_optional_fields": ["tracking_number", "logistics_status", "shipping_carrier", "logistics_info", "package_list"]
-    }
-    array_response, array_error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
-                                                 shop_id=shop_id, access_token=access_token, body=array_params)
-    detailed_results["array_optional_fields"] = {"response": array_response, "error": array_error}
-    
-    # Test 4: Logistics tracking info API
-    logistics_params = {"order_sn": test_order_sn}
-    logistics_response, logistics_error = call_shopee_api("/api/v2/logistics/get_tracking_info", method='GET', 
-                                                        shop_id=shop_id, access_token=access_token, body=logistics_params)
-    detailed_results["logistics_tracking_info"] = {"response": logistics_response, "error": logistics_error}
-    
-    # Analysis of results
-    analysis = {}
-    
-    # Analyze basic response
-    if basic_response and not basic_error:
-        order_list = basic_response.get('response', {}).get('order_list', [])
-        if order_list:
-            order = order_list[0]
-            analysis["basic"] = {
-                "booking_sn": order.get('booking_sn', ''),
-                "order_status": order.get('order_status', ''),
-                "shipping_carrier": order.get('shipping_carrier', ''),
-                "available_fields": list(order.keys())
-            }
-    
-    # Analyze enhanced response
-    if enhanced_response and not enhanced_error:
-        order_list = enhanced_response.get('response', {}).get('order_list', [])
-        if order_list:
-            order = order_list[0]
-            
-            # Check package_list for tracking
-            package_tracking = []
-            packages = order.get('package_list', [])
-            for pkg in packages:
-                pkg_tracking = pkg.get('tracking_number', '')
-                if pkg_tracking:
-                    package_tracking.append(pkg_tracking)
-            
-            analysis["enhanced"] = {
-                "tracking_number": order.get('tracking_number', ''),
-                "booking_sn": order.get('booking_sn', ''),
-                "logistics_status": order.get('logistics_status', ''),
-                "shipping_carrier": order.get('shipping_carrier', ''),
-                "package_tracking": package_tracking,
-                "package_count": len(packages),
-                "logistics_info": order.get('logistics_info', {}),
-                "available_fields": list(order.keys())
-            }
-    
-    # Analyze logistics response
-    if logistics_response and not logistics_error:
-        tracking_info = logistics_response.get('response', {}).get('tracking_info', [])
-        analysis["logistics"] = {
-            "tracking_info_count": len(tracking_info),
-            "logistics_status": logistics_response.get('response', {}).get('logistics_status', ''),
-            "first_tracking": tracking_info[0] if tracking_info else None
+    # Test each order comprehensively
+    for order_sn in unique_order_sns[:5]:  # Test first 5 orders to avoid timeout
+        print(f"Analyzing order: {order_sn}")
+        order_analysis = {}
+        
+        # Test 1: Enhanced order detail with package_list
+        enhanced_params = {
+            "order_sn_list": order_sn,
+            "response_optional_fields": "package_list,shipping_carrier,logistics_status"
         }
+        enhanced_response, enhanced_error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
+                                                          shop_id=shop_id, access_token=access_token, body=enhanced_params)
+        
+        # Test 2: Logistics tracking info
+        logistics_params = {"order_sn": order_sn}
+        logistics_response, logistics_error = call_shopee_api("/api/v2/logistics/get_tracking_info", method='GET', 
+                                                            shop_id=shop_id, access_token=access_token, body=logistics_params)
+        
+        # Analyze results
+        if enhanced_response and not enhanced_error:
+            order_list = enhanced_response.get('response', {}).get('order_list', [])
+            if order_list:
+                order = order_list[0]
+                
+                # Extract package info
+                packages = order.get('package_list', [])
+                package_info = []
+                for pkg in packages:
+                    package_info.append({
+                        "package_number": pkg.get('package_number', ''),
+                        "shipping_carrier": pkg.get('shipping_carrier', ''),
+                        "logistics_status": pkg.get('logistics_status', ''),
+                        "logistics_channel_id": pkg.get('logistics_channel_id', '')
+                    })
+                
+                order_analysis["order_detail"] = {
+                    "order_sn": order.get('order_sn'),
+                    "order_status": order.get('order_status'),
+                    "booking_sn": order.get('booking_sn', ''),
+                    "shipping_carrier": order.get('shipping_carrier', ''),
+                    "package_count": len(packages),
+                    "packages": package_info
+                }
+        
+        # Analyze logistics tracking
+        if logistics_response and not logistics_error:
+            logistics_data = logistics_response.get('response', {})
+            tracking_info = logistics_data.get('tracking_info', [])
+            
+            order_analysis["logistics"] = {
+                "logistics_status": logistics_data.get('logistics_status', ''),
+                "tracking_updates": len(tracking_info),
+                "latest_status": tracking_info[0].get('logistics_status') if tracking_info else None,
+                "latest_description": tracking_info[0].get('description') if tracking_info else None
+            }
+        
+        # Summary for this order
+        has_package_number = any(pkg.get('package_number') for pkg in order_analysis.get('order_detail', {}).get('packages', []))
+        has_tracking_history = order_analysis.get('logistics', {}).get('tracking_updates', 0) > 0
+        
+        order_analysis["summary"] = {
+            "has_package_number": has_package_number,
+            "has_tracking_history": has_tracking_history,
+            "best_tracking_reference": ""
+        }
+        
+        # Determine best tracking reference
+        if has_package_number:
+            first_package = order_analysis.get('order_detail', {}).get('packages', [{}])[0]
+            order_analysis["summary"]["best_tracking_reference"] = first_package.get('package_number', '')
+        elif order_analysis.get('order_detail', {}).get('booking_sn'):
+            order_analysis["summary"]["best_tracking_reference"] = order_analysis.get('order_detail', {}).get('booking_sn')
+        else:
+            order_analysis["summary"]["best_tracking_reference"] = "No tracking available"
+        
+        analysis_results[order_sn] = order_analysis
+        
+        # Delay to avoid rate limiting
+        import time
+        time.sleep(0.2)
+    
+    # Overall summary
+    total_orders = len(analysis_results)
+    orders_with_package = len([r for r in analysis_results.values() if r.get('summary', {}).get('has_package_number')])
+    orders_with_tracking = len([r for r in analysis_results.values() if r.get('summary', {}).get('has_tracking_history')])
+    
+    overall_summary = {
+        "total_analyzed": total_orders,
+        "with_package_number": orders_with_package,
+        "with_tracking_history": orders_with_tracking,
+        "success_rate": f"{orders_with_package}/{total_orders} ({round(orders_with_package/total_orders*100, 1)}% have package numbers)"
+    }
     
     return {
         "shop_id": shop_id,
-        "test_order_sn": test_order_sn,
-        "detailed_results": detailed_results,
-        "analysis": analysis,
-        "tested_orders": unique_order_sns
+        "overall_summary": overall_summary,
+        "order_analysis": analysis_results,
+        "all_test_orders": unique_order_sns
     }
 
 @app.route('/test_connection', methods=['GET', 'POST'])
