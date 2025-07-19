@@ -320,83 +320,84 @@ def test_order_detail_api():
         if sn not in unique_order_sns:
             unique_order_sns.append(sn)
     
-    # Test each order comprehensively
+    # Test each order comprehensively  
+    analysis_results = {}  # Initialize analysis_results
+    
     for order_sn in unique_order_sns[:5]:  # Test first 5 orders to avoid timeout
         print(f"Analyzing order: {order_sn}")
         order_analysis = {}
         
         try:
-        
-        # Test 1: Enhanced order detail with package_list
-        enhanced_params = {
-            "order_sn_list": order_sn,
-            "response_optional_fields": "package_list,shipping_carrier,logistics_status"
-        }
-        enhanced_response, enhanced_error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
-                                                          shop_id=shop_id, access_token=access_token, body=enhanced_params)
-        
-        # Test 2: Logistics tracking info
-        logistics_params = {"order_sn": order_sn}
-        logistics_response, logistics_error = call_shopee_api("/api/v2/logistics/get_tracking_info", method='GET', 
-                                                            shop_id=shop_id, access_token=access_token, body=logistics_params)
-        
-        # Analyze results
-        if enhanced_response and not enhanced_error:
-            order_list = enhanced_response.get('response', {}).get('order_list', [])
-            if order_list:
-                order = order_list[0]
-                
-                # Extract package info
-                packages = order.get('package_list', [])
-                package_info = []
-                for pkg in packages:
-                    package_info.append({
-                        "package_number": pkg.get('package_number', ''),
-                        "shipping_carrier": pkg.get('shipping_carrier', ''),
-                        "logistics_status": pkg.get('logistics_status', ''),
-                        "logistics_channel_id": pkg.get('logistics_channel_id', '')
-                    })
-                
-                order_analysis["order_detail"] = {
-                    "order_sn": order.get('order_sn'),
-                    "order_status": order.get('order_status'),
-                    "booking_sn": order.get('booking_sn', ''),
-                    "shipping_carrier": order.get('shipping_carrier', ''),
-                    "package_count": len(packages),
-                    "packages": package_info
-                }
-        
-        # Analyze logistics tracking
-        if logistics_response and not logistics_error:
-            logistics_data = logistics_response.get('response', {})
-            tracking_info = logistics_data.get('tracking_info', [])
-            
-            order_analysis["logistics"] = {
-                "logistics_status": logistics_data.get('logistics_status', ''),
-                "tracking_updates": len(tracking_info),
-                "latest_status": tracking_info[0].get('logistics_status') if tracking_info else None,
-                "latest_description": tracking_info[0].get('description') if tracking_info else None
+            # Test 1: Enhanced order detail with package_list
+            enhanced_params = {
+                "order_sn_list": order_sn,
+                "response_optional_fields": "package_list,shipping_carrier,logistics_status"
             }
-        
-        # Summary for this order
-        has_package_number = any(pkg.get('package_number') for pkg in order_analysis.get('order_detail', {}).get('packages', []))
-        has_tracking_history = order_analysis.get('logistics', {}).get('tracking_updates', 0) > 0
-        
-        order_analysis["summary"] = {
-            "has_package_number": has_package_number,
-            "has_tracking_history": has_tracking_history,
-            "best_tracking_reference": ""
-        }
-        
-        # Determine best tracking reference
-        if has_package_number:
-            first_package = order_analysis.get('order_detail', {}).get('packages', [{}])[0]
-            order_analysis["summary"]["best_tracking_reference"] = first_package.get('package_number', '')
-        elif order_analysis.get('order_detail', {}).get('booking_sn'):
-            order_analysis["summary"]["best_tracking_reference"] = order_analysis.get('order_detail', {}).get('booking_sn')
-        else:
-            order_analysis["summary"]["best_tracking_reference"] = "No tracking available"
-        
+            enhanced_response, enhanced_error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
+                                                              shop_id=shop_id, access_token=access_token, body=enhanced_params)
+            
+            # Test 2: Logistics tracking info
+            logistics_params = {"order_sn": order_sn}
+            logistics_response, logistics_error = call_shopee_api("/api/v2/logistics/get_tracking_info", method='GET', 
+                                                                shop_id=shop_id, access_token=access_token, body=logistics_params)
+            
+            # Analyze results
+            if enhanced_response and not enhanced_error:
+                order_list = enhanced_response.get('response', {}).get('order_list', [])
+                if order_list:
+                    order = order_list[0]
+                    
+                    # Extract package info
+                    packages = order.get('package_list', [])
+                    package_info = []
+                    for pkg in packages:
+                        package_info.append({
+                            "package_number": pkg.get('package_number', ''),
+                            "shipping_carrier": pkg.get('shipping_carrier', ''),
+                            "logistics_status": pkg.get('logistics_status', ''),
+                            "logistics_channel_id": pkg.get('logistics_channel_id', '')
+                        })
+                    
+                    order_analysis["order_detail"] = {
+                        "order_sn": order.get('order_sn'),
+                        "order_status": order.get('order_status'),
+                        "booking_sn": order.get('booking_sn', ''),
+                        "shipping_carrier": order.get('shipping_carrier', ''),
+                        "package_count": len(packages),
+                        "packages": package_info
+                    }
+            
+            # Analyze logistics tracking
+            if logistics_response and not logistics_error:
+                logistics_data = logistics_response.get('response', {})
+                tracking_info = logistics_data.get('tracking_info', [])
+                
+                order_analysis["logistics"] = {
+                    "logistics_status": logistics_data.get('logistics_status', ''),
+                    "tracking_updates": len(tracking_info),
+                    "latest_status": tracking_info[0].get('logistics_status') if tracking_info else None,
+                    "latest_description": tracking_info[0].get('description') if tracking_info else None
+                }
+            
+            # Summary for this order
+            has_package_number = any(pkg.get('package_number') for pkg in order_analysis.get('order_detail', {}).get('packages', []))
+            has_tracking_history = order_analysis.get('logistics', {}).get('tracking_updates', 0) > 0
+            
+            order_analysis["summary"] = {
+                "has_package_number": has_package_number,
+                "has_tracking_history": has_tracking_history,
+                "best_tracking_reference": ""
+            }
+            
+            # Determine best tracking reference
+            if has_package_number:
+                first_package = order_analysis.get('order_detail', {}).get('packages', [{}])[0]
+                order_analysis["summary"]["best_tracking_reference"] = first_package.get('package_number', '')
+            elif order_analysis.get('order_detail', {}).get('booking_sn'):
+                order_analysis["summary"]["best_tracking_reference"] = order_analysis.get('order_detail', {}).get('booking_sn')
+            else:
+                order_analysis["summary"]["best_tracking_reference"] = "No tracking available"
+            
             analysis_results[order_sn] = order_analysis
             
         except Exception as e:
