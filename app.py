@@ -263,20 +263,26 @@ def test_logistics_api():
     if not order_sn:
         return {"error": "No order_sn found in return"}
     
-    # Test logistics APIs
+    # Test logistics APIs with correct parameters
     results = {}
     
-    # Try logistics tracking
-    tracking_body = {"order_sn_list": [order_sn]}
-    tracking_response, tracking_error = call_shopee_api("/api/v2/logistics/get_tracking_number", method='GET', 
-                                                      shop_id=shop_id, access_token=access_token, body=tracking_body)
-    results["logistics_tracking"] = {"response": tracking_response, "error": tracking_error}
+    # Try 1: logistics tracking with order_sn (not order_sn_list)
+    tracking_body1 = {"order_sn": order_sn}
+    tracking_response1, tracking_error1 = call_shopee_api("/api/v2/logistics/get_tracking_number", method='GET', 
+                                                        shop_id=shop_id, access_token=access_token, body=tracking_body1)
+    results["logistics_tracking_single"] = {"response": tracking_response1, "error": tracking_error1}
     
-    # Try shipping document
-    shipping_body = {"order_sn_list": [order_sn]}
-    shipping_response, shipping_error = call_shopee_api("/api/v2/logistics/get_shipping_document_parameter", method='GET', 
-                                                      shop_id=shop_id, access_token=access_token, body=shipping_body)
-    results["shipping_document"] = {"response": shipping_response, "error": shipping_error}
+    # Try 2: get_shipping_parameter (different endpoint)
+    shipping_body2 = {"order_sn": order_sn}
+    shipping_response2, shipping_error2 = call_shopee_api("/api/v2/logistics/get_shipping_parameter", method='GET', 
+                                                        shop_id=shop_id, access_token=access_token, body=shipping_body2)
+    results["shipping_parameter"] = {"response": shipping_response2, "error": shipping_error2}
+    
+    # Try 3: get_order_logistics (alternative)
+    logistics_body3 = {"order_sn": order_sn}
+    logistics_response3, logistics_error3 = call_shopee_api("/api/v2/logistics/get_order_logistics", method='GET', 
+                                                          shop_id=shop_id, access_token=access_token, body=logistics_body3)
+    results["order_logistics"] = {"response": logistics_response3, "error": logistics_error3}
     
     return {
         "shop_id": shop_id,
