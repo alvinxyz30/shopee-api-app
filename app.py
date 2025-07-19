@@ -301,72 +301,79 @@ def test_order_detail_api():
     shop_id, shop_data = next(iter(shops.items()))
     access_token = shop_data['access_token']
     
-    # Get order from last 10 days (within 15 day limit)
-    from datetime import datetime, timedelta
-    end_date = datetime.now() - timedelta(days=1)  # Yesterday
-    start_date = end_date - timedelta(days=10)  # 10 days ago
+    # Test specific order SNs provided by user
+    test_order_sns = [
+        "250526T703Q7WJ",
+        "2505306YU8DK5U", 
+        "250526TYKU6HTA",
+        "250525R7KG03CU",
+        "2505306TVYGBVV",
+        "2505307W8SW31U",
+        "250526TYKU6HTA",  # duplicate
+        "2505295BT3R766",
+        "250525SMM7EJ97",
+        "250523JMN3AH8S",
+        "2505281S171N93",
+        "250525RKDDJTAC",
+        "2505319AQS6KV0"
+    ]
     
-    # Get orders from last 10 days
-    order_body = {
-        "time_range_field": "create_time", 
-        "time_from": int(start_date.timestamp()),
-        "time_to": int(end_date.timestamp()),
-        "page_no": 1,
-        "page_size": 10
-        # Remove order_status filter to get any orders
+    # Remove duplicates and keep order
+    unique_order_sns = []
+    for sn in test_order_sns:
+        if sn not in unique_order_sns:
+            unique_order_sns.append(sn)
+    
+    # Test each order SN for tracking numbers
+    all_results = {}
+    
+    for order_sn in unique_order_sns:
+        print(f"Testing order: {order_sn}")
+        order_results = {}
+        
+        # Get basic order detail 
+        order_params = {"order_sn_list": order_sn}
+        response, error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=order_params)
+        
+        if error:
+            order_results = {"error": error, "tracking_number": None, "order_status": None}
+        else:
+            order_list = response.get('response', {}).get('order_list', [])
+            if order_list:
+                order_detail = order_list[0]
+                tracking_number = order_detail.get('booking_sn', '')
+                order_status = order_detail.get('order_status', '')
+                shipping_carrier = order_detail.get('shipping_carrier', '')
+                
+                order_results = {
+                    "tracking_number": tracking_number,
+                    "order_status": order_status, 
+                    "shipping_carrier": shipping_carrier,
+                    "has_tracking": bool(tracking_number),
+                    "error": None
+                }
+            else:
+                order_results = {"error": "No order found", "tracking_number": None, "order_status": None}
+        
+        all_results[order_sn] = order_results
+        
+        # Small delay to avoid rate limiting
+        import time
+        time.sleep(0.1)
+    
+    # Summary
+    summary = {
+        "total_tested": len(unique_order_sns),
+        "with_tracking": len([r for r in all_results.values() if r.get('has_tracking')]),
+        "without_tracking": len([r for r in all_results.values() if not r.get('has_tracking') and not r.get('error')]),
+        "errors": len([r for r in all_results.values() if r.get('error')])
     }
-    
-    orders_response, orders_error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
-                                                   shop_id=shop_id, access_token=access_token, body=order_body)
-    
-    if orders_error or not orders_response:
-        return {"error": f"Failed to get orders: {orders_error}"}
-    
-    order_list = orders_response.get('response', {}).get('order_list', [])
-    if not order_list:
-        return {"error": "No orders found from last 10 days"}
-    
-    # Use first order (any status)
-    order_sn = order_list[0].get('order_sn')
-    order_status = order_list[0].get('order_status', 'UNKNOWN')
-    
-    # Test multiple API variations with proper optional fields
-    results = {}
-    
-    # Try 1: GET with proper response_optional_fields
-    order_params1 = {
-        "order_sn_list": order_sn,
-        "response_optional_fields": "tracking_number,logistics_status,shipping_carrier,logistics_info"
-    }
-    response1, error1 = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
-                                      shop_id=shop_id, access_token=access_token, body=order_params1)
-    results["test1_with_optional_fields"] = {"response": response1, "error": error1}
-    
-    # Try 2: GET with array format for optional fields
-    order_params2 = {
-        "order_sn_list": [order_sn],
-        "response_optional_fields": ["tracking_number", "logistics_status", "shipping_carrier", "logistics_info"]
-    }
-    response2, error2 = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
-                                      shop_id=shop_id, access_token=access_token, body=order_params2)
-    results["test2_array_optional_fields"] = {"response": response2, "error": error2}
-    
-    # Try 3: logistics.get_tracking_info API (as per reference)
-    tracking_body = {"order_sn": order_sn}
-    tracking_response, tracking_error = call_shopee_api("/api/v2/logistics/get_tracking_info", method='GET', 
-                                                       shop_id=shop_id, access_token=access_token, body=tracking_body)
-    results["test3_logistics_tracking_info"] = {"response": tracking_response, "error": tracking_error}
-    
-    # Try 4: Basic order detail without optional fields (for comparison)
-    order_params4 = {"order_sn_list": order_sn}
-    response4, error4 = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
-                                      shop_id=shop_id, access_token=access_token, body=order_params4)
-    results["test4_basic_order_detail"] = {"response": response4, "error": error4}
     
     return {
         "shop_id": shop_id,
-        "order_sn": order_sn,
-        "api_tests": results
+        "summary": summary,
+        "order_details": all_results
     }
 
 @app.route('/test_connection', methods=['GET', 'POST'])
