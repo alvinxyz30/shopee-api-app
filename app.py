@@ -199,6 +199,22 @@ def clear_session():
     flash('Semua data sesi dan toko terhubung telah dihapus.', 'info')
     return redirect(url_for('dashboard'))
 
+@app.route('/clear_temp_data')
+def clear_temp_data():
+    """Menghapus data sementara export (export_progress_store) tanpa menghapus session."""
+    global export_progress_store
+    
+    # Count berapa data yang akan dihapus
+    count_before = len(export_progress_store)
+    
+    # Clear semua data sementara
+    export_progress_store.clear()
+    
+    flash(f'Data sementara berhasil dihapus ({count_before} export data dihapus dari memory).', 'success')
+    app.logger.info(f"Manual cleanup: Cleared {count_before} export data from memory store")
+    
+    return redirect(url_for('dashboard'))
+
 @app.route('/test_returns_api')
 def test_returns_api():
     """Test returns API to debug issues and see available fields."""
