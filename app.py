@@ -839,8 +839,8 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
                 # Debug logging
                 app.logger.info(f"DEBUG: order_sn={order_sn}, order_details={order_details}")
                 print(f"DEBUG: order_sn={order_sn}, payment={order_details['payment_method']}")
-                # Add delay to respect rate limiting
-                time.sleep(0.2)
+                # Add delay to respect rate limiting (100 calls per minute = 0.6s per call)
+                time.sleep(0.6)
             
             # Format dates
             return_create_time = datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('create_time') else None
@@ -991,7 +991,7 @@ def process_returns_chunked_global(export_id, access_token):
             # API call dengan date filter
             return_body = {
                 "page_no": page_no, 
-                "page_size": 1,  # Minimal batch size for maximum stability
+                "page_size": 10,  # Increased from 1 to 10 for better efficiency with 100 calls/min limit
                 "create_time_from": int(chunk_start.timestamp()),
                 "create_time_to": int(chunk_end.timestamp())
             }
@@ -1030,13 +1030,13 @@ def process_returns_chunked_global(export_id, access_token):
             app.logger.info(f"Chunk {chunk_index + 1} progress: {current_progress:.1f}%, total processed: {total_processed}")
             print(f"Total processed so far: {total_processed}")
             
-            # Add delay to respect rate limit (increased for stability)
-            time.sleep(0.5)  # Increased delay for better stability
+            # Add delay to respect rate limit (100 calls per minute = 0.6s per call)
+            time.sleep(0.6)
             page_no += 1
             
-            # Safety limit per chunk (adjusted for page_size=1)
-            if page_no > 400:  # Increased limit since page_size=1 (same total: 400*1=400 records)
-                app.logger.info(f"Reached safety limit of 400 pages in chunk {chunk_index + 1}")
+            # Safety limit per chunk (adjusted for page_size=10)
+            if page_no > 40:  # Adjusted limit since page_size=10 (same total: 40*10=400 records)
+                app.logger.info(f"Reached safety limit of 40 pages in chunk {chunk_index + 1}")
                 print(f"Safety limit reached in chunk {chunk_index + 1}")
                 break
         
@@ -1162,8 +1162,8 @@ def process_orders_chunked_global(export_id, access_token):
             all_orders.extend(order_list)
             total_processed += len(order_list)
             
-            # Add delay to prevent rate limiting
-            time.sleep(1)
+            # Add delay to prevent rate limiting (100 calls per minute = 0.6s per call)
+            time.sleep(0.6)
             page_no += 1
             
             # Safety limit per chunk
