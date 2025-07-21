@@ -752,9 +752,18 @@ def test_return_detail():
     if not shops:
         return {"error": "No shops found in session"}, 400
     
-    # Get first shop for testing
-    shop_id, shop_data = next(iter(shops.items()))
-    access_token = shop_data['access_token']
+    # Allow testing with specific shop_id if provided in URL parameter
+    target_shop_id = request.args.get('shop_id')
+    
+    if target_shop_id and target_shop_id in shops:
+        # Use specified shop
+        shop_id = target_shop_id
+        shop_data = shops[shop_id]
+        access_token = shop_data['access_token']
+    else:
+        # Get first shop for testing (default behavior)
+        shop_id, shop_data = next(iter(shops.items()))
+        access_token = shop_data['access_token']
     
     # First get a valid return_sn from existing returns to test the API format
     try:
@@ -840,7 +849,8 @@ def test_return_detail():
             "api_endpoint": "/api/v2/returns/get_return_detail",
             "valid_return_sns_found": valid_return_sns,
             "test_results": results,
-            "note": "Testing multiple formats and return numbers to find working combination"
+            "note": "Testing multiple formats and return numbers to find working combination",
+            "usage": "Add ?shop_id=59414059 to URL to test with specific shop"
         }
         
     except Exception as e:
