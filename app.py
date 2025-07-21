@@ -1500,9 +1500,6 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         time.sleep(0.6)
         page_no += 1
             
-        if page_no > 200:
-            break
-    
     app.logger.info(f"Fetched {len(all_raw_data)} total returns from API")
     
     # Step 2: Manual date filtering
