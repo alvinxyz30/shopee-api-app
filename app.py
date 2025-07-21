@@ -312,6 +312,106 @@ def test_shop_info():
     
     return results
 
+@app.route('/test_date_filter')
+def test_date_filter():
+    """Test apakah date filtering berfungsi dengan benar pada returns API."""
+    shops = session.get('shops', {})
+    if not shops:
+        return {"error": "No shops connected"}
+    
+    # Get first shop for testing
+    shop_id, shop_data = next(iter(shops.items()))
+    access_token = shop_data['access_token']
+    
+    results = {}
+    
+    # Test 1: Tanpa filter (ambil semua data)
+    try:
+        no_filter_body = {"page_no": 1, "page_size": 5}
+        no_filter_response, no_filter_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                            shop_id=shop_id, access_token=access_token, body=no_filter_body)
+        
+        returns_no_filter = no_filter_response.get('response', {}).get('return_list', []) if no_filter_response else []
+        results["no_filter"] = {
+            "total_returns": len(returns_no_filter),
+            "sample_dates": [
+                {
+                    "return_sn": item.get('return_sn'),
+                    "create_time": item.get('create_time'),
+                    "create_date": datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d') if item.get('create_time') else None
+                } for item in returns_no_filter[:3]
+            ],
+            "error": no_filter_error
+        }
+    except Exception as e:
+        results["no_filter"] = {"error": str(e)}
+    
+    # Test 2: Dengan filter 7 hari terakhir
+    try:
+        from datetime import datetime, timedelta
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        filter_body = {
+            "page_no": 1, 
+            "page_size": 5,
+            "create_time_from": int(start_date.timestamp()),
+            "create_time_to": int(end_date.timestamp())
+        }
+        
+        filter_response, filter_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                      shop_id=shop_id, access_token=access_token, body=filter_body)
+        
+        returns_filtered = filter_response.get('response', {}).get('return_list', []) if filter_response else []
+        results["with_filter_7days"] = {
+            "filter_range": f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}",
+            "total_returns": len(returns_filtered),
+            "sample_dates": [
+                {
+                    "return_sn": item.get('return_sn'),
+                    "create_time": item.get('create_time'),
+                    "create_date": datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d') if item.get('create_time') else None
+                } for item in returns_filtered[:3]
+            ],
+            "error": filter_error
+        }
+    except Exception as e:
+        results["with_filter_7days"] = {"error": str(e)}
+    
+    # Test 3: Filter yang sangat spesifik (kemarin saja)
+    try:
+        yesterday = datetime.now() - timedelta(days=1)
+        yesterday_start = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+        yesterday_end = yesterday.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        specific_filter_body = {
+            "page_no": 1, 
+            "page_size": 10,
+            "create_time_from": int(yesterday_start.timestamp()),
+            "create_time_to": int(yesterday_end.timestamp())
+        }
+        
+        specific_response, specific_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                          shop_id=shop_id, access_token=access_token, body=specific_filter_body)
+        
+        returns_specific = specific_response.get('response', {}).get('return_list', []) if specific_response else []
+        results["yesterday_only"] = {
+            "filter_range": f"{yesterday_start.strftime('%Y-%m-%d %H:%M')} to {yesterday_end.strftime('%Y-%m-%d %H:%M')}",
+            "total_returns": len(returns_specific),
+            "sample_dates": [
+                {
+                    "return_sn": item.get('return_sn'),
+                    "create_time": item.get('create_time'),
+                    "create_date": datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d %H:%M') if item.get('create_time') else None
+                } for item in returns_specific
+            ],
+            "error": specific_error
+        }
+    except Exception as e:
+        results["yesterday_only"] = {"error": str(e)}
+    
+    return results
+
 @app.route('/test_returns_api')
 def test_returns_api():
     """Test returns API to debug issues and see available fields."""
