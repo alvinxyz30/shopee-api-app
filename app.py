@@ -1349,7 +1349,7 @@ def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progr
 def format_return_data_for_excel(chunk_returns, order_details_map, tracking_numbers_map):
     """
     Formats the raw return data into a list of dictionaries for Excel export.
-    This function is now pure and does not make API calls.
+    Crucially, it creates a SEPARATE ROW for each item in a return.
     """
     if not chunk_returns:
         return []
@@ -1361,38 +1361,22 @@ def format_return_data_for_excel(chunk_returns, order_details_map, tracking_numb
         order_detail = order_details_map.get(order_sn, {})
         tracking_number = tracking_numbers_map.get(order_sn, "")
 
-        # Format dates
+        # Get parent-level information once
         return_create_time = datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('create_time') else None
         order_create_time = datetime.fromtimestamp(order_detail.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if order_detail.get('create_time') else None
         return_update_time = datetime.fromtimestamp(item.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('update_time') else None
         
-        # Determine payment method
         is_cod = order_detail.get('cod', False)
         payment_method = "COD (Cash on Delivery)" if is_cod else "Online Payment"
 
-        # Extract SKU codes, item names, dan quantities
-        sku_codes, item_names, quantities = [], [], []
-        items_data = item.get('item', [])
-        for product_item in items_data:
-            variation_sku = product_item.get('variation_sku', '')
-            item_sku = product_item.get('item_sku', '')
-            sku_to_use = variation_sku if variation_sku else item_sku
-            
-            sku_codes.append(sku_to_use)
-            item_names.append(product_item.get('name', ''))
-            quantities.append(str(product_item.get('amount', 0)))
-        
-        processed_item = {
+        parent_info = {
             "Nomor Pesanan": order_sn,
             "Nomor Retur": item.get('return_sn'),
             "No Resi Retur": item.get('tracking_number', ''),
-            "No Resi Pengiriman": tracking_number, # Use the efficiently fetched tracking number
+            "No Resi Pengiriman": tracking_number,
             "Tanggal Order": order_create_time,
             "Tanggal Retur Diajukan": return_create_time,
             "Payment Method": payment_method,
-            "SKU Code": ' | '.join(filter(None, sku_codes)),
-            "Nama Produk": ' | '.join(item_names),
-            "Qty": ' | '.join(quantities),
             "Status": item.get('status'),
             "Alasan": item.get('reason'),
             "Mata Uang": item.get('currency'),
@@ -1405,16 +1389,42 @@ def format_return_data_for_excel(chunk_returns, order_details_map, tracking_numb
             "Negotiation Status": item.get('negotiation_status'),
             "Needs Logistics": "Ya" if item.get('needs_logistics') else "Tidak"
         }
-        processed_items.append(processed_item)
+
+        # Loop through each product in the return and create a row for it
+        items_data = item.get('item', [])
+        if not items_data:
+            # If a return has no items listed, create one row with empty product info
+            row = parent_info.copy()
+            row.update({
+                "SKU Code": "",
+                "Nama Produk": "N/A (No item data in return)",
+                "Qty": 0
+            })
+            processed_items.append(row)
+        else:
+            for product_item in items_data:
+                variation_sku = product_item.get('variation_sku', '')
+                item_sku = product_item.get('item_sku', '')
+                sku_to_use = variation_sku if variation_sku else item_sku
+                
+                product_info = {
+                    "SKU Code": sku_to_use,
+                    "Nama Produk": product_item.get('name', ''),
+                    "Qty": product_item.get('amount', 0)
+                }
+                
+                # Combine parent info with product info for the final row
+                row = {**parent_info, **product_info}
+                processed_items.append(row)
     
     return processed_items
 
 def process_returns_with_manual_filter_global(export_id, access_token):
     """
     Get ALL returns, filter manually, then use BATCH processing to get details.
-    This is much more efficient than the previous N+1 query approach.
+    This version has strict date validation and correct multi-SKU handling.
     """
-    app.logger.info("=== STARTING process_returns_with_manual_filter_global (BATCH-OPTIMIZED) ===")
+    app.logger.info("=== STARTING process_returns_with_manual_filter_global (v3 - Strict & Expanded) ===")
     
     if export_id not in export_progress_store:
         return
@@ -1426,26 +1436,36 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         export_data['current_step'] = step
         app.logger.info(f"Progress {export_data['progress']}%: {export_data['current_step']}")
 
-    update_progress(5.0, 'Mengambil SEMUA data retur dari API...')
-    
-    try:
-        date_from = datetime.strptime(export_data['date_from'], '%Y-%m-%d').replace(hour=0, minute=0, second=0) if export_data['date_from'] else None
-        date_to = datetime.strptime(export_data['date_to'], '%Y-%m-%d').replace(hour=23, minute=59, second=59) if export_data['date_to'] else None
-        app.logger.info(f"Manual filter range: {date_from} to {date_to}")
-    except (ValueError, TypeError):
-        date_from, date_to = None, None
-        app.logger.warning("Invalid date format, will export all data without date filtering.")
+    # Step 1: Strict Date Validation
+    update_progress(1.0, 'Memvalidasi rentang tanggal...')
+    if not export_data.get('date_from') or not export_data.get('date_to'):
+        error_msg = 'Error: Rentang tanggal wajib diisi. Proses dibatalkan.'
+        update_progress(100.0, error_msg)
+        export_data['status'] = 'error'
+        export_data['error'] = error_msg
+        return
 
+    try:
+        date_from = datetime.strptime(export_data['date_from'], '%Y-%m-%d').replace(hour=0, minute=0, second=0)
+        date_to = datetime.strptime(export_data['date_to'], '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+        app.logger.info(f"Date filter validated. Range: {date_from} to {date_to}")
+    except (ValueError, TypeError):
+        error_msg = 'Error: Format tanggal tidak valid. Gunakan YYYY-MM-DD. Proses dibatalkan.'
+        update_progress(100.0, error_msg)
+        export_data['status'] = 'error'
+        export_data['error'] = error_msg
+        return
+
+    # Step 2: Fetch all raw return data
+    update_progress(5.0, 'Mengambil SEMUA data retur dari API...')
     shop_id = export_data['shop_id']
     all_raw_returns = []
     page_no = 1
     
-    # Step 1: Fetch all raw return data without any page limit
     while True:
-        # Instead of a percentage, we show the page number.
         update_progress(10, f'Mengambil halaman {page_no} (semua data retur)...')
-            
-        return_body = {"page_no": page_no, "page_size": 50} # Increased page size
+        
+        return_body = {"page_no": page_no, "page_size": 50}
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
                                         shop_id=shop_id, access_token=access_token, body=return_body)
             
@@ -1456,24 +1476,20 @@ def process_returns_with_manual_filter_global(export_id, access_token):
                 
         return_list = response.get('response', {}).get('return', [])
         if not return_list:
-            break # No more data
+            break
                 
         all_raw_returns.extend(return_list)
         page_no += 1
-        time.sleep(0.3) # Be nice to the API
+        time.sleep(0.3)
     
     app.logger.info(f"Fetched {len(all_raw_returns)} total raw returns from API.")
     update_progress(60.0, f'Menyaring {len(all_raw_returns)} data berdasarkan tanggal...')
 
-    # Step 2: Manual date filtering
-    filtered_returns = []
-    if date_from and date_to:
-        for return_item in all_raw_returns:
-            create_time = return_item.get('create_time')
-            if create_time and date_from <= datetime.fromtimestamp(create_time) <= date_to:
-                filtered_returns.append(return_item)
-    else:
-        filtered_returns = all_raw_returns # No date filter, use all data
+    # Step 3: Manual date filtering
+    filtered_returns = [
+        item for item in all_raw_returns 
+        if item.get('create_time') and date_from <= datetime.fromtimestamp(item['create_time']) <= date_to
+    ]
     
     app.logger.info(f"After date filtering: {len(filtered_returns)} returns match criteria.")
     
@@ -1485,10 +1501,9 @@ def process_returns_with_manual_filter_global(export_id, access_token):
 
     update_progress(75.0, f'Mempersiapkan pengambilan detail untuk {len(filtered_returns)} retur...')
 
-    # Step 3: BATCH fetch all required details (order info, tracking, etc.)
-    order_sns_to_fetch = [r['order_sn'] for r in filtered_returns if 'order_sn' in r]
+    # Step 4: BATCH fetch all required details
+    order_sns_to_fetch = list(set([r['order_sn'] for r in filtered_returns if 'order_sn' in r]))
     
-    # Define a callback to update progress from within the batch function
     def progress_callback_for_batch(progress, step):
         update_progress(progress, step)
 
@@ -1496,15 +1511,15 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         shop_id, access_token, order_sns_to_fetch, progress_callback_for_batch
     )
 
-    # Step 4: Format the final data for Excel
-    update_progress(95.0, 'Menyusun data akhir untuk file Excel...')
+    # Step 5: Format the final data for Excel (with row expansion for multi-SKU)
+    update_progress(95.0, 'Menyusun data akhir untuk file Excel (membuat baris terpisah untuk tiap SKU)...')
     processed_data = format_return_data_for_excel(filtered_returns, order_details_map, tracking_numbers_map)
     
     export_data['data'] = processed_data
     export_data['status'] = 'completed'
-    update_progress(100.0, f'Selesai! {len(processed_data)} retur berhasil diproses.')
+    update_progress(100.0, f'Selesai! {len(processed_data)} baris data berhasil diproses.')
     
-    app.logger.info(f"Export completed with {len(processed_data)} records (BATCH-OPTIMIZED).")
+    app.logger.info(f"Export completed with {len(processed_data)} rows (Strict Dates & Expanded SKUs).")
 
 def process_returns_with_date_filter_global(export_id, access_token):
     """Process returns data WITH date filter (original logic) - excludes RRBOC returns."""
