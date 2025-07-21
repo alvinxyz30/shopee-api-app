@@ -169,14 +169,56 @@ def callback():
         flash("Respons token dari Shopee tidak lengkap.", 'danger')
         return redirect(url_for('dashboard'))
 
-    # DIKEMBALIKAN: Menggunakan endpoint /api/v2/shop/get_shop_info yang lebih standar
-    path_info = "/api/v2/shop/get_shop_info"
-    info_data, error = call_shopee_api(path_info, method='GET', shop_id=int(shop_id_str), access_token=access_token)
-    shop_name = f"Toko {shop_id_str}"
-    if error:
-        flash(f"Gagal mendapatkan info nama toko: {error}. Menggunakan ID sebagai nama.", 'warning')
+    # Get shop name using various methods
+    shop_name = f"Toko {shop_id_str}"  # Default fallback
+    
+    # Method 1: Try get_shop_info
+    try:
+        path_info = "/api/v2/shop/get_shop_info"
+        info_data, error = call_shopee_api(path_info, method='GET', shop_id=int(shop_id_str), access_token=access_token)
+        
+        app.logger.info(f"Shop info API response: {info_data}")
+        app.logger.info(f"Shop info API error: {error}")
+        
+        if error:
+            app.logger.warning(f"Method 1 failed - get_shop_info error: {error}")
+        elif info_data and 'response' in info_data:
+            response_data = info_data.get('response', {})
+            if 'shop_name' in response_data and response_data['shop_name']:
+                shop_name = response_data['shop_name']
+                app.logger.info(f"SUCCESS: Found shop name via get_shop_info: {shop_name}")
+            else:
+                app.logger.warning(f"Method 1 failed - no shop_name in response: {response_data}")
+        else:
+            app.logger.warning(f"Method 1 failed - no response data: {info_data}")
+            
+    except Exception as e:
+        app.logger.error(f"Exception in get_shop_info: {e}")
+    
+    # Method 2: Try get_profile if first method failed
+    if shop_name == f"Toko {shop_id_str}":
+        try:
+            profile_data, profile_error = call_shopee_api("/api/v2/shop/get_profile", method='GET', 
+                                                        shop_id=int(shop_id_str), access_token=access_token)
+            
+            app.logger.info(f"Shop profile API response: {profile_data}")
+            app.logger.info(f"Shop profile API error: {profile_error}")
+            
+            if not profile_error and profile_data and 'response' in profile_data:
+                response_data = profile_data.get('response', {})
+                if 'shop_name' in response_data and response_data['shop_name']:
+                    shop_name = response_data['shop_name']
+                    app.logger.info(f"SUCCESS: Found shop name via get_profile: {shop_name}")
+                    
+        except Exception as e:
+            app.logger.error(f"Exception in get_profile: {e}")
+    
+    # Final check
+    if shop_name == f"Toko {shop_id_str}":
+        flash(f"Tidak dapat mengambil nama toko. Menggunakan ID sebagai nama: {shop_name}", 'warning')
+        app.logger.warning(f"FAILED: Could not retrieve shop name, using fallback: {shop_name}")
     else:
-        shop_name = info_data.get('response', {}).get('shop_name', shop_name)
+        app.logger.info(f"FINAL: Using shop name: {shop_name}")
 
     shops = session.get('shops', {})
     shops[shop_id_str] = {
@@ -214,6 +256,55 @@ def clear_temp_data():
     app.logger.info(f"Manual cleanup: Cleared {count_before} export data from memory store")
     
     return redirect(url_for('dashboard'))
+
+@app.route('/test_shop_info')
+def test_shop_info():
+    """Test shop info API to debug nama toko issue."""
+    shops = session.get('shops', {})
+    if not shops:
+        return {"error": "No shops connected"}
+    
+    # Get first shop for testing
+    shop_id, shop_data = next(iter(shops.items()))
+    access_token = shop_data['access_token']
+    
+    results = {}
+    
+    # Test berbagai endpoint untuk ambil nama toko
+    endpoints_to_test = [
+        "/api/v2/shop/get_shop_info",
+        "/api/v2/shop/get_profile", 
+        "/api/v2/public/get_shops_by_partner",
+        "/api/v2/merchant/get_merchant_info"
+    ]
+    
+    for endpoint in endpoints_to_test:
+        try:
+            response, error = call_shopee_api(endpoint, method='GET', 
+                                            shop_id=shop_id, access_token=access_token)
+            
+            results[endpoint] = {
+                "response": response,
+                "error": error,
+                "shop_name_found": response.get('response', {}).get('shop_name') if response else None
+            }
+        except Exception as e:
+            results[endpoint] = {"error": str(e)}
+    
+    # Test dengan body parameter juga
+    try:
+        body_test = {}
+        response, error = call_shopee_api("/api/v2/shop/get_shop_info", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=body_test)
+        results["get_shop_info_with_body"] = {
+            "response": response,
+            "error": error,
+            "shop_name_found": response.get('response', {}).get('shop_name') if response else None
+        }
+    except Exception as e:
+        results["get_shop_info_with_body"] = {"error": str(e)}
+    
+    return results
 
 @app.route('/test_returns_api')
 def test_returns_api():
