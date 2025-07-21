@@ -1079,6 +1079,7 @@ def export_data():
     data_type = request.form.get('data_type')
     date_from_str = request.form.get('date_from', '')
     date_to_str = request.form.get('date_to', '')
+    export_mode = request.form.get('export_mode', 'date_filter')  # Default to date filter
     
     shop_data = session.get('shops', {}).get(shop_id)
     if not shop_data:
@@ -1086,13 +1087,14 @@ def export_data():
         return redirect(url_for('dashboard'))
     
     # Initialize progress tracking in global store and session
-    export_id = f"{shop_id}_{data_type}_{int(time.time())}"
+    export_id = f"{shop_id}_{data_type}_{export_mode}_{int(time.time())}"
     export_data = {
         'export_id': export_id,
         'shop_id': shop_id,
         'data_type': data_type,
         'date_from': date_from_str,
         'date_to': date_to_str,
+        'export_mode': export_mode,
         'status': 'initializing',
         'progress': 0,
         'total_estimated': 0,
@@ -1213,7 +1215,10 @@ def start_chunked_export():
                 current_export = export_progress_store[export_id]
                 
                 if current_export['data_type'] == 'returns':
-                    process_returns_chunked_global(export_id, access_token)
+                    if current_export['export_mode'] == 'all_data':
+                        process_returns_all_data_global(export_id, access_token)
+                    else:
+                        process_returns_with_date_filter_global(export_id, access_token)
                 elif current_export['data_type'] == 'orders':
                     process_orders_chunked_global(export_id, access_token)
                 elif current_export['data_type'] == 'products':
@@ -1426,7 +1431,7 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
     
     return processed_items
 
-def process_returns_chunked_global(export_id, access_token):
+def process_returns_all_data_global(export_id, access_token):
     """Process ALL returns data WITHOUT date filter to include RRBOC returns."""
     app.logger.info("=== STARTING process_returns_chunked_global (NO DATE FILTER) ===")
     
@@ -1547,6 +1552,115 @@ def process_returns_chunked_global(export_id, access_token):
         export_data['data'] = []
     
     # Clear processed data from memory
+    del all_processed_data
+
+def process_returns_with_date_filter_global(export_id, access_token):
+    """Process returns data WITH date filter (original logic) - excludes RRBOC returns."""
+    app.logger.info("=== STARTING process_returns_with_date_filter_global (WITH DATE FILTER) ===")
+    
+    if export_id not in export_progress_store:
+        return
+    
+    export_data = export_progress_store[export_id]
+    export_data['status'] = 'processing'
+    export_data['current_step'] = 'Mempersiapkan chunks tanggal...'
+    export_data['progress'] = 5.0
+    
+    # Load checkpoint if exists
+    checkpoint = load_checkpoint(export_id)
+    start_chunk_index = checkpoint.get('chunk_index', 0)
+    start_page_no = checkpoint.get('page_no', 1)
+    
+    app.logger.info(f"Shop ID: {export_data['shop_id']}")
+    app.logger.info(f"WITH DATE FILTER - excludes RRBOC returns")
+    app.logger.info(f"Date range: {export_data['date_from']} to {export_data['date_to']}")
+    
+    # Use date chunks with filter (original logic)
+    date_chunks = get_date_chunks(export_data['date_from'], export_data['date_to'], 3)
+    app.logger.info(f"Created {len(date_chunks)} date chunks")
+    
+    shop_id = export_data['shop_id']
+    all_processed_data = []
+    total_processed = 0
+    
+    # Loop through date chunks with filter
+    for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
+        if chunk_index < start_chunk_index:
+            continue
+            
+        app.logger.info(f"Processing chunk {chunk_index + 1}/{len(date_chunks)}: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
+        
+        chunk_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0
+        export_data['progress'] = round(chunk_progress, 1)
+        export_data['current_step'] = f'Memproses chunk {chunk_index + 1}/{len(date_chunks)} ({chunk_start.strftime("%Y-%m-%d")} to {chunk_end.strftime("%Y-%m-%d")})'
+        
+        page_no = start_page_no if chunk_index == start_chunk_index else 1
+        chunk_returns = []
+        
+        while True:
+            page_progress = min(page_no / 50, 0.9) * (75.0 / len(date_chunks))
+            current_progress = 5.0 + (chunk_index / len(date_chunks)) * 75.0 + page_progress
+            export_data['progress'] = round(min(85.0, current_progress), 1)
+            export_data['current_step'] = f'Chunk {chunk_index + 1}/{len(date_chunks)} - Halaman {page_no}...'
+            
+            # API call WITH date filter (original logic)
+            return_body = {
+                "page_no": page_no, 
+                "page_size": 10,
+                "create_time_from": int(chunk_start.timestamp()),
+                "create_time_to": int(chunk_end.timestamp())
+            }
+            
+            response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                            shop_id=shop_id, access_token=access_token, body=return_body)
+            
+            if error:
+                export_data['error'] = f"Gagal mengambil daftar retur: {error}"
+                export_data['status'] = 'error'
+                return
+                
+            return_list = response.get('response', {}).get('return', [])
+            if not return_list:
+                break
+                
+            chunk_returns.extend(return_list)
+            total_processed += len(return_list)
+            
+            time.sleep(0.6)
+            page_no += 1
+            
+            if page_no > 40:
+                break
+        
+        # Process chunk data
+        if chunk_returns:
+            processed_chunk_data = process_chunk_data(chunk_returns, 'returns', shop_id, access_token)
+            all_processed_data.extend(processed_chunk_data)
+            del chunk_returns
+            del processed_chunk_data
+        
+        start_page_no = 1
+    
+    # Finalize export
+    export_data['current_step'] = 'Menyelesaikan export...'
+    export_data['progress'] = 95.0
+    
+    if all_processed_data:
+        export_data['data'] = all_processed_data
+        export_data['status'] = 'completed'
+        export_data['progress'] = 100.0
+        export_data['current_step'] = f'Selesai! {len(all_processed_data)} retur berhasil diproses (DENGAN FILTER TANGGAL)'
+        
+        app.logger.info(f"Export completed with {len(all_processed_data)} records (WITH DATE FILTER)")
+        
+        if export_id in export_progress_store:
+            export_progress_store[export_id].pop('checkpoint', None)
+    else:
+        export_data['status'] = 'completed'
+        export_data['progress'] = 100.0
+        export_data['current_step'] = 'Tidak ada data retur ditemukan dalam rentang tanggal'
+        export_data['data'] = []
+    
     del all_processed_data
 
 def process_orders_chunked_global(export_id, access_token):

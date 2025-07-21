@@ -11,6 +11,41 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
     </style>
+    <script>
+        // Toggle date fields based on export mode
+        function toggleDateFields() {
+            const allDataRadios = document.querySelectorAll('input[name="export_mode"][value="all_data"]');
+            const dateFilterRadios = document.querySelectorAll('input[name="export_mode"][value="date_filter"]');
+            
+            allDataRadios.forEach(radio => {
+                radio.addEventListener('change', function() {
+                    if (this.checked) {
+                        const shopId = this.closest('form').querySelector('input[name="shop_id"]').value;
+                        const dateFields = document.getElementById(`date_fields_${shopId}`);
+                        if (dateFields) {
+                            dateFields.style.opacity = '0.5';
+                            dateFields.querySelectorAll('input').forEach(input => input.disabled = true);
+                        }
+                    }
+                });
+            });
+            
+            dateFilterRadios.forEach(radio => {
+                radio.addEventListener('change', function() {
+                    if (this.checked) {
+                        const shopId = this.closest('form').querySelector('input[name="shop_id"]').value;
+                        const dateFields = document.getElementById(`date_fields_${shopId}`);
+                        if (dateFields) {
+                            dateFields.style.opacity = '1';
+                            dateFields.querySelectorAll('input').forEach(input => input.disabled = false);
+                        }
+                    }
+                });
+            });
+        }
+        
+        document.addEventListener('DOMContentLoaded', toggleDateFields);
+    </script>
 </head>
 <body class="bg-gray-100">
 
@@ -79,15 +114,34 @@
                                     </select>
                                 </div>
                                 
-                                <div class="grid grid-cols-2 gap-2">
+                                <!-- Export Mode Selection -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Mode Export:</label>
+                                    <div class="space-y-2">
+                                        <label class="flex items-start space-x-2 cursor-pointer">
+                                            <input type="radio" name="export_mode" value="date_filter" checked class="mt-1">
+                                            <div>
+                                                <span class="font-medium text-sm">Filter Tanggal</span>
+                                                <p class="text-xs text-gray-600">Export data dalam rentang tanggal (exclude RRBOC)</p>
+                                            </div>
+                                        </label>
+                                        <label class="flex items-start space-x-2 cursor-pointer">
+                                            <input type="radio" name="export_mode" value="all_data" class="mt-1">
+                                            <div>
+                                                <span class="font-medium text-sm">Semua Data</span>
+                                                <p class="text-xs text-gray-600">Export semua data (include RRBOC seperti 2501010C4UCUTPB)</p>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-2 gap-2" id="date_fields_{{ shop.shop_id }}">
                                     <div>
                                         <label for="date_from_{{ shop.shop_id }}" class="block text-sm font-medium text-gray-700 mb-1">Dari</label>
-                                        <!-- Menggunakan variabel 'date_from' dari app.py -->
                                         <input type="date" id="date_from_{{ shop.shop_id }}" name="date_from" class="w-full p-2 border border-gray-300 rounded-md" value="{{ date_from }}">
                                     </div>
                                     <div>
                                         <label for="date_to_{{ shop.shop_id }}" class="block text-sm font-medium text-gray-700 mb-1">Sampai</label>
-                                        <!-- Menggunakan variabel 'date_to' dari app.py -->
                                         <input type="date" id="date_to_{{ shop.shop_id }}" name="date_to" class="w-full p-2 border border-gray-300 rounded-md" value="{{ date_to }}">
                                     </div>
                                 </div>
