@@ -760,8 +760,8 @@ def test_return_detail():
     return_sn = "2501010C4UCUTPB"
     
     try:
-        # Call return detail API
-        detail_body = {"return_sn_list": [return_sn]}
+        # Call return detail API with correct parameter format (based on documentation)
+        detail_body = {"return_sn": return_sn}
         response, error = call_shopee_api("/api/v2/returns/get_return_detail", method='GET', 
                                         shop_id=shop_id, access_token=access_token, body=detail_body)
         
@@ -773,18 +773,16 @@ def test_return_detail():
                 "api_endpoint": "/api/v2/returns/get_return_detail"
             }
         
-        # Extract return detail data
-        return_list = response.get('response', {}).get('return_list', [])
+        # Extract return detail data (based on API documentation - response is direct object, not array)
+        return_detail = response.get('response', {})
         
-        if not return_list:
+        if not return_detail or not return_detail.get('return_sn'):
             return {
                 "shop_id": shop_id,
                 "return_sn_tested": return_sn,
                 "error": "No return details found for this return number",
                 "raw_response": response
             }
-        
-        return_detail = return_list[0]
         
         # Extract all date-related fields and convert timestamps to readable dates
         date_fields = {}
