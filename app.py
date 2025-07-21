@@ -756,104 +756,97 @@ def test_return_detail():
     shop_id, shop_data = next(iter(shops.items()))
     access_token = shop_data['access_token']
     
-    # Specific return number to test
-    return_sn = "2501010C4UCUTPB"
-    
+    # First get a valid return_sn from existing returns to test the API format
     try:
-        # Call return detail API with correct parameter format (based on documentation)
-        detail_body = {"return_sn": return_sn}
-        response, error = call_shopee_api("/api/v2/returns/get_return_detail", method='GET', 
-                                        shop_id=shop_id, access_token=access_token, body=detail_body)
+        # Get actual return data from the shop first
+        return_list_body = {"page_no": 1, "page_size": 5}
+        list_response, list_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                  shop_id=shop_id, access_token=access_token, body=return_list_body)
         
-        if error:
-            return {
-                "shop_id": shop_id,
-                "return_sn_tested": return_sn,
-                "error": error,
-                "api_endpoint": "/api/v2/returns/get_return_detail"
-            }
+        valid_return_sns = []
+        if not list_error and list_response:
+            returns = list_response.get('response', {}).get('return', [])
+            valid_return_sns = [ret.get('return_sn') for ret in returns if ret.get('return_sn')]
         
-        # Extract return detail data (based on API documentation - response is direct object, not array)
-        return_detail = response.get('response', {})
+        # Test both the requested return_sn and a valid one from the list
+        test_return_sns = ["2501010C4UCUTPB"]  # User requested
+        if valid_return_sns:
+            test_return_sns.extend(valid_return_sns[:2])  # Add 2 valid ones for comparison
         
-        if not return_detail or not return_detail.get('return_sn'):
-            return {
-                "shop_id": shop_id,
-                "return_sn_tested": return_sn,
-                "error": "No return details found for this return number",
-                "raw_response": response
-            }
+        results = {}
         
-        # Extract all date-related fields and convert timestamps to readable dates
-        date_fields = {}
-        all_fields = {}
-        
-        for key, value in return_detail.items():
-            # Store all fields for analysis
-            all_fields[key] = value
+        for return_sn in test_return_sns:
+            result_key = f"test_{return_sn}"
             
-            # Identify date fields (typically contain 'time' or 'date' in the name)
-            if any(date_word in key.lower() for date_word in ['time', 'date', 'due']) and isinstance(value, (int, float)):
+            # Try different parameter formats for each return_sn
+            formats_to_try = [
+                {"return_sn": return_sn},  # Documentation format
+                {"return_sn_list": [return_sn]},  # Array format (in case docs are wrong)
+                # Try as URL parameter instead of body (some APIs work this way)
+            ]
+            
+            format_results = {}
+            
+            for i, format_body in enumerate(formats_to_try):
                 try:
-                    # Convert timestamp to readable date
-                    readable_date = datetime.fromtimestamp(value).strftime('%Y-%m-%d %H:%M:%S')
-                    date_fields[key] = {
-                        "timestamp": value,
-                        "readable_date": readable_date
+                    response, error = call_shopee_api("/api/v2/returns/get_return_detail", method='GET', 
+                                                    shop_id=shop_id, access_token=access_token, body=format_body)
+                    
+                    format_results[f"format_{i+1}"] = {
+                        "parameters": format_body,
+                        "error": error,
+                        "success": not bool(error),
+                        "response_preview": {
+                            "has_response": bool(response and response.get('response')),
+                            "return_sn_in_response": response.get('response', {}).get('return_sn') if response else None
+                        } if not error else None
                     }
-                except (ValueError, OSError):
-                    # If conversion fails, keep original value
-                    date_fields[key] = {
-                        "timestamp": value,
-                        "readable_date": "Invalid timestamp"
+                    
+                    # If successful, extract date fields
+                    if not error and response and response.get('response'):
+                        return_detail = response.get('response', {})
+                        date_fields = {}
+                        
+                        for key, value in return_detail.items():
+                            if any(date_word in key.lower() for date_word in ['time', 'date', 'due']) and isinstance(value, (int, float)):
+                                try:
+                                    readable_date = datetime.fromtimestamp(value).strftime('%Y-%m-%d %H:%M:%S')
+                                    date_fields[key] = {
+                                        "timestamp": value,
+                                        "readable_date": readable_date
+                                    }
+                                except (ValueError, OSError):
+                                    date_fields[key] = {
+                                        "timestamp": value,
+                                        "readable_date": "Invalid timestamp"
+                                    }
+                        
+                        format_results[f"format_{i+1}"]["date_fields"] = date_fields
+                        format_results[f"format_{i+1}"]["all_fields"] = list(return_detail.keys())
+                    
+                except Exception as e:
+                    format_results[f"format_{i+1}"] = {
+                        "parameters": format_body,
+                        "exception": str(e)
                     }
-        
-        # Also check item-level data for dates
-        item_date_fields = {}
-        items = return_detail.get('item', [])
-        for i, item in enumerate(items):
-            item_dates = {}
-            for key, value in item.items():
-                if any(date_word in key.lower() for date_word in ['time', 'date', 'due']) and isinstance(value, (int, float)):
-                    try:
-                        readable_date = datetime.fromtimestamp(value).strftime('%Y-%m-%d %H:%M:%S')
-                        item_dates[key] = {
-                            "timestamp": value,
-                            "readable_date": readable_date
-                        }
-                    except (ValueError, OSError):
-                        item_dates[key] = {
-                            "timestamp": value,
-                            "readable_date": "Invalid timestamp"
-                        }
-            if item_dates:
-                item_date_fields[f"item_{i}"] = item_dates
+                
+                # Small delay between requests
+                time.sleep(0.3)
+            
+            results[result_key] = format_results
         
         return {
             "shop_id": shop_id,
-            "return_sn_tested": return_sn,
             "api_endpoint": "/api/v2/returns/get_return_detail",
-            "success": True,
-            "date_fields_analysis": {
-                "return_level_dates": date_fields,
-                "item_level_dates": item_date_fields,
-                "total_date_fields_found": len(date_fields) + sum(len(item_dates) for item_dates in item_date_fields.values())
-            },
-            "all_return_fields": list(all_fields.keys()),
-            "return_detail_sample": {
-                "return_sn": return_detail.get('return_sn'),
-                "status": return_detail.get('status'),
-                "reason": return_detail.get('reason'),
-                "item_count": len(items)
-            },
-            "raw_response": response
+            "valid_return_sns_found": valid_return_sns,
+            "test_results": results,
+            "note": "Testing multiple formats and return numbers to find working combination"
         }
         
     except Exception as e:
         return {
             "shop_id": shop_id,
-            "return_sn_tested": return_sn,
-            "error": f"Exception occurred: {str(e)}",
+            "error": f"Exception in test setup: {str(e)}",
             "api_endpoint": "/api/v2/returns/get_return_detail"
         }
 
