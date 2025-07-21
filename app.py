@@ -745,6 +745,120 @@ def test_order_detail_api():
         "all_test_orders": unique_order_sns
     }
 
+@app.route('/test_return_detail')
+def test_return_detail():
+    """Test get_return_detail API for specific return number to analyze date fields."""
+    shops = session.get('shops', {})
+    if not shops:
+        return {"error": "No shops found in session"}, 400
+    
+    # Get first shop for testing
+    shop_id, shop_data = next(iter(shops.items()))
+    access_token = shop_data['access_token']
+    
+    # Specific return number to test
+    return_sn = "2501010C4UCUTPB"
+    
+    try:
+        # Call return detail API
+        detail_body = {"return_sn_list": [return_sn]}
+        response, error = call_shopee_api("/api/v2/returns/get_return_detail", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=detail_body)
+        
+        if error:
+            return {
+                "shop_id": shop_id,
+                "return_sn_tested": return_sn,
+                "error": error,
+                "api_endpoint": "/api/v2/returns/get_return_detail"
+            }
+        
+        # Extract return detail data
+        return_list = response.get('response', {}).get('return_list', [])
+        
+        if not return_list:
+            return {
+                "shop_id": shop_id,
+                "return_sn_tested": return_sn,
+                "error": "No return details found for this return number",
+                "raw_response": response
+            }
+        
+        return_detail = return_list[0]
+        
+        # Extract all date-related fields and convert timestamps to readable dates
+        date_fields = {}
+        all_fields = {}
+        
+        for key, value in return_detail.items():
+            # Store all fields for analysis
+            all_fields[key] = value
+            
+            # Identify date fields (typically contain 'time' or 'date' in the name)
+            if any(date_word in key.lower() for date_word in ['time', 'date', 'due']) and isinstance(value, (int, float)):
+                try:
+                    # Convert timestamp to readable date
+                    readable_date = datetime.fromtimestamp(value).strftime('%Y-%m-%d %H:%M:%S')
+                    date_fields[key] = {
+                        "timestamp": value,
+                        "readable_date": readable_date
+                    }
+                except (ValueError, OSError):
+                    # If conversion fails, keep original value
+                    date_fields[key] = {
+                        "timestamp": value,
+                        "readable_date": "Invalid timestamp"
+                    }
+        
+        # Also check item-level data for dates
+        item_date_fields = {}
+        items = return_detail.get('item', [])
+        for i, item in enumerate(items):
+            item_dates = {}
+            for key, value in item.items():
+                if any(date_word in key.lower() for date_word in ['time', 'date', 'due']) and isinstance(value, (int, float)):
+                    try:
+                        readable_date = datetime.fromtimestamp(value).strftime('%Y-%m-%d %H:%M:%S')
+                        item_dates[key] = {
+                            "timestamp": value,
+                            "readable_date": readable_date
+                        }
+                    except (ValueError, OSError):
+                        item_dates[key] = {
+                            "timestamp": value,
+                            "readable_date": "Invalid timestamp"
+                        }
+            if item_dates:
+                item_date_fields[f"item_{i}"] = item_dates
+        
+        return {
+            "shop_id": shop_id,
+            "return_sn_tested": return_sn,
+            "api_endpoint": "/api/v2/returns/get_return_detail",
+            "success": True,
+            "date_fields_analysis": {
+                "return_level_dates": date_fields,
+                "item_level_dates": item_date_fields,
+                "total_date_fields_found": len(date_fields) + sum(len(item_dates) for item_dates in item_date_fields.values())
+            },
+            "all_return_fields": list(all_fields.keys()),
+            "return_detail_sample": {
+                "return_sn": return_detail.get('return_sn'),
+                "status": return_detail.get('status'),
+                "reason": return_detail.get('reason'),
+                "item_count": len(items)
+            },
+            "raw_response": response
+        }
+        
+    except Exception as e:
+        return {
+            "shop_id": shop_id,
+            "return_sn_tested": return_sn,
+            "error": f"Exception occurred: {str(e)}",
+            "api_endpoint": "/api/v2/returns/get_return_detail"
+        }
+
 @app.route('/test_connection', methods=['GET', 'POST'])
 def test_connection():
     """Test if server can receive requests."""
