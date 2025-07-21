@@ -323,8 +323,15 @@ def test_date_filter_specific_shop():
     target_shop_id = "59414059"
     target_return_sn = "2501010C4UCUTPB"
     
+    # Debug: Show all connected shops
+    connected_shops = {shop_id: shop_data.get('shop_name', 'Unknown') for shop_id, shop_data in shops.items()}
+    
     if target_shop_id not in shops:
-        return {"error": f"Shop {target_shop_id} not connected. Please authorize it first."}
+        return {
+            "error": f"Shop {target_shop_id} not connected. Please authorize it first.",
+            "connected_shops": connected_shops,
+            "note": "You need to connect shop 59414059 via /authorize first"
+        }
     
     shop_data = shops[target_shop_id]
     access_token = shop_data['access_token']
@@ -484,6 +491,8 @@ def test_date_filter_specific_shop():
     
     return {
         "shop_id": target_shop_id,
+        "shop_name": shops[target_shop_id].get('shop_name', 'Unknown'),
+        "connected_shops": connected_shops,
         "target_return_sn": target_return_sn,
         "expected_date": "2025-01-01 07:58:52",
         "test_results": results,
