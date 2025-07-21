@@ -343,7 +343,7 @@ def test_date_filter_specific_shop():
         from datetime import datetime, timedelta
         target_date = datetime(2025, 1, 1)  # 1 Januari 2025
         start_date = target_date.replace(hour=0, minute=0, second=0)
-        end_date = target_date.replace(hour=23, minute=59, second=59)
+        end_date = datetime(2025, 1, 4).replace(hour=23, minute=59, second=59)
         
         filter_body = {
             "page_no": 1, 
