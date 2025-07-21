@@ -1269,218 +1269,183 @@ def load_checkpoint(export_id):
         return export_progress_store[export_id].get('checkpoint', {})
     return {}
 
-def get_order_details(order_sn, shop_id, access_token):
-    """Get complete order details including payment method, create time, and shipping info"""
-    try:
-        # Call orders API menggunakan GET method yang benar
-        order_params = {
-            "order_sn_list": order_sn  # String format works
-        }
-        
-        response, error = call_shopee_api("/api/v2/order/get_order_detail", method='GET', 
-                                        shop_id=shop_id, access_token=access_token, body=order_params, max_retries=2)
+def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progress_callback=None):
+    """
+    Efficiently fetches order details and tracking numbers for a list of order_sn
+    using batch processing for order details.
+    """
+    order_details_map = {}
+    tracking_numbers_map = {}
+    unique_order_sns = list(set(order_sns))
+    total_sns = len(unique_order_sns)
+    
+    app.logger.info(f"Starting batch fetch for {total_sns} unique order SNs.")
+
+    # === Batch fetch order details ===
+    order_chunk_size = 50  # Max 50 per call for get_order_detail
+    order_chunks = [unique_order_sns[i:i + order_chunk_size] for i in range(0, total_sns, order_chunk_size)]
+    
+    for i, chunk in enumerate(order_chunks):
+        if progress_callback:
+            # Progress for this sub-step (e.g., from 75% to 85%)
+            progress = 75 + (i / len(order_chunks)) * 10
+            progress_callback(progress, f'Mengambil detail pesanan batch {i+1}/{len(order_chunks)}...')
+            
+        params = {"order_sn_list": ",".join(chunk)}
+        response, error = call_shopee_api(
+            "/api/v2/order/get_order_detail", 
+            method='GET', 
+            shop_id=shop_id, 
+            access_token=access_token, 
+            body=params,
+            max_retries=3
+        )
         
         if error:
-            app.logger.warning(f"Failed to get order details for {order_sn}: {error}")
-            return {"payment_method": "API Error", "create_time": None, "shipping_info": {}}
-            
+            app.logger.warning(f"Batch order detail error for chunk {i+1}: {error}")
+            continue
+        
         order_list = response.get('response', {}).get('order_list', [])
-        if order_list and len(order_list) > 0:
-            order_detail = order_list[0]
-            
-            # Check COD field (Cash on Delivery)
-            is_cod = order_detail.get('cod', False)
-            payment_method = "COD (Cash on Delivery)" if is_cod else "Online Payment"
-            
-            # Get order create time (tanggal order)
-            order_create_time = order_detail.get('create_time')
-            
-            # Get REAL tracking number from logistics API
-            real_tracking_number = ""
+        for order_detail in order_list:
+            order_details_map[order_detail['order_sn']] = order_detail
+        
+        time.sleep(0.5) # Respect rate limits between batch calls
+
+    # === Fetch tracking numbers (one by one, as there's no batch endpoint) ===
+    for i, order_sn in enumerate(unique_order_sns):
+        if progress_callback:
+            # Progress for this sub-step (e.g., from 85% to 95%)
+            progress = 85 + (i / total_sns) * 10
+            progress_callback(progress, f'Mengambil no. resi {i+1}/{total_sns}...')
+
+        # First, check if tracking is available in the already-fetched order detail
+        order_detail = order_details_map.get(order_sn, {})
+        tracking_number = order_detail.get('tracking_number') # Some orders have it directly
+        if not tracking_number:
+            # If not, call the specific logistics API
             try:
                 tracking_params = {"order_sn": order_sn}
-                tracking_response, tracking_error = call_shopee_api("/api/v2/logistics/get_tracking_number", method='GET', 
-                                                                  shop_id=shop_id, access_token=access_token, body=tracking_params, max_retries=1)
-                
+                tracking_response, tracking_error = call_shopee_api(
+                    "/api/v2/logistics/get_tracking_number", 
+                    method='GET', 
+                    shop_id=shop_id, 
+                    access_token=access_token, 
+                    body=tracking_params, 
+                    max_retries=1
+                )
                 if tracking_response and not tracking_error:
-                    real_tracking_number = tracking_response.get('response', {}).get('tracking_number', '')
-                    app.logger.info(f"Found real tracking number for {order_sn}: {real_tracking_number}")
+                    tracking_number = tracking_response.get('response', {}).get('tracking_number', '')
                 else:
                     app.logger.warning(f"Could not get tracking number for {order_sn}: {tracking_error}")
-                    
-            except Exception as tracking_ex:
-                app.logger.warning(f"Tracking API error for {order_sn}: {tracking_ex}")
-            
-            # Get shipping info with REAL tracking number
-            shipping_info = {
-                "tracking_number": real_tracking_number,  # REAL SPX tracking number (SPXID format)
-                "package_number": order_detail.get('booking_sn', ''),  # Internal package number (fallback)
-                "shipping_carrier": order_detail.get('shipping_carrier', ''),
-                "order_status": order_detail.get('order_status', ''),
-                "ship_by_date": order_detail.get('ship_by_date', ''),
-                "advance_package": order_detail.get('advance_package', False),
-            }
-            
-            # Debug: print all keys to see available fields
-            app.logger.info(f"Order detail fields available: {list(order_detail.keys())}")
-            app.logger.info(f"Order details for {order_sn}: payment={payment_method}, shipping_info={shipping_info}")
-            
-            return {
-                "payment_method": payment_method,
-                "create_time": order_create_time,
-                "shipping_info": shipping_info
-            }
-        else:
-            app.logger.warning(f"No order found for order_sn: {order_sn}")
-            return {"payment_method": "Order tidak ditemukan", "create_time": None, "shipping_info": {}}
-            
-    except Exception as e:
-        app.logger.error(f"Exception getting order details for {order_sn}: {e}")
-        return {"payment_method": f"Error: {str(e)}", "create_time": None, "shipping_info": {}}
+            except Exception as e:
+                app.logger.error(f"Exception getting tracking number for {order_sn}: {e}")
 
-def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_token=None):
-    """Process data chunk dan return format Excel, lalu clear memory"""
+        tracking_numbers_map[order_sn] = tracking_number or "" # Ensure it's a string
+        time.sleep(0.2) # Small delay to be safe with rate limits
+
+    app.logger.info(f"Finished batch fetch. Got details for {len(order_details_map)} orders and {len(tracking_numbers_map)} tracking numbers.")
+    return order_details_map, tracking_numbers_map
+
+def format_return_data_for_excel(chunk_returns, order_details_map, tracking_numbers_map):
+    """
+    Formats the raw return data into a list of dictionaries for Excel export.
+    This function is now pure and does not make API calls.
+    """
     if not chunk_returns:
         return []
     
     processed_items = []
     
     for item in chunk_returns:
-        if data_type == 'returns':
-            # Lookup order details dari orders API
-            order_sn = item.get('order_sn')
-            order_details = {"payment_method": "Tidak tersedia", "create_time": None, "shipping_info": {}}
-            
-            if order_sn and shop_id and access_token:
-                order_details = get_order_details(order_sn, shop_id, access_token)
-                # Debug logging
-                app.logger.info(f"DEBUG: order_sn={order_sn}, order_details={order_details}")
-                print(f"DEBUG: order_sn={order_sn}, payment={order_details['payment_method']}")
-                # Add delay to respect rate limiting (100 calls per minute = 0.6s per call)
-                time.sleep(0.6)
-            
-            # Format dates
-            return_create_time = datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('create_time') else None
-            order_create_time = datetime.fromtimestamp(order_details['create_time']).strftime('%Y-%m-%d %H:%M:%S') if order_details['create_time'] else None
-            return_update_time = datetime.fromtimestamp(item.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('update_time') else None
-            
-            # Extract SKU codes, item names, dan quantities dari item array
-            sku_codes = []
-            item_names = []
-            quantities = []
-            items_data = item.get('item', [])
-            for product_item in items_data:
-                # Get both item_sku and variation_sku
-                item_sku = product_item.get('item_sku', '')
-                variation_sku = product_item.get('variation_sku', '')
-                item_name = product_item.get('name', '')
-                quantity = product_item.get('amount', 0)  # Get quantity
-                
-                # Use variation_sku if available, otherwise item_sku
-                if variation_sku:
-                    sku_codes.append(variation_sku)
-                elif item_sku:
-                    sku_codes.append(item_sku)
-                
-                if item_name:
-                    item_names.append(item_name)
-                
-                if quantity:
-                    quantities.append(str(quantity))
-            
-            # Join multiple SKUs, names, and quantities if there are multiple items
-            sku_code_str = ' | '.join(filter(None, sku_codes)) if sku_codes else ''
-            item_name_str = ' | '.join(item_names) if item_names else ''
-            quantity_str = ' | '.join(quantities) if quantities else '0'
-            
-            processed_item = {
-                "Nomor Pesanan": item.get('order_sn'),
-                "Nomor Retur": item.get('return_sn'),
-                "No Resi Retur": item.get('tracking_number', ''),  # Return tracking from returns API
-                "No Resi Pengiriman": order_details['shipping_info'].get('tracking_number', ''),  # booking_sn is the tracking number
-                "Tanggal Order": order_create_time,  # From order API
-                "Tanggal Retur Diajukan": return_create_time,  # Return create time
-                "Payment Method": order_details['payment_method'],  # COD vs Online Payment
-                "SKU Code": sku_code_str,  # NEW: Extracted from item array
-                "Nama Produk": item_name_str,  # BONUS: Product names
-                "Qty": quantity_str,  # NEW: Product quantities
-                "Status": item.get('status'),
-                "Alasan": item.get('reason'),
-                "Mata Uang": item.get('currency'),
-                "Total Pengembalian Dana": item.get('refund_amount'),
-                "Alasan Teks dari Pembeli": item.get('text_reason'),
-                "Username Pembeli": item.get('user', {}).get('username') if item.get('user') else None,
-                "Email Pembeli": item.get('user', {}).get('email') if item.get('user') else None,
-                "Tanggal Update": return_update_time,
-                "Tanggal Jatuh Tempo": datetime.fromtimestamp(item.get('due_date')).strftime('%Y-%m-%d %H:%M:%S') if item.get('due_date') else None,
-                "Negotiation Status": item.get('negotiation_status'),
-                "Needs Logistics": "Ya" if item.get('needs_logistics') else "Tidak"
-            }
-        else:
-            # Default processing for other data types
-            processed_item = item
+        order_sn = item.get('order_sn')
+        order_detail = order_details_map.get(order_sn, {})
+        tracking_number = tracking_numbers_map.get(order_sn, "")
+
+        # Format dates
+        return_create_time = datetime.fromtimestamp(item.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('create_time') else None
+        order_create_time = datetime.fromtimestamp(order_detail.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if order_detail.get('create_time') else None
+        return_update_time = datetime.fromtimestamp(item.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item.get('update_time') else None
         
+        # Determine payment method
+        is_cod = order_detail.get('cod', False)
+        payment_method = "COD (Cash on Delivery)" if is_cod else "Online Payment"
+
+        # Extract SKU codes, item names, dan quantities
+        sku_codes, item_names, quantities = [], [], []
+        items_data = item.get('item', [])
+        for product_item in items_data:
+            variation_sku = product_item.get('variation_sku', '')
+            item_sku = product_item.get('item_sku', '')
+            sku_to_use = variation_sku if variation_sku else item_sku
+            
+            sku_codes.append(sku_to_use)
+            item_names.append(product_item.get('name', ''))
+            quantities.append(str(product_item.get('amount', 0)))
+        
+        processed_item = {
+            "Nomor Pesanan": order_sn,
+            "Nomor Retur": item.get('return_sn'),
+            "No Resi Retur": item.get('tracking_number', ''),
+            "No Resi Pengiriman": tracking_number, # Use the efficiently fetched tracking number
+            "Tanggal Order": order_create_time,
+            "Tanggal Retur Diajukan": return_create_time,
+            "Payment Method": payment_method,
+            "SKU Code": ' | '.join(filter(None, sku_codes)),
+            "Nama Produk": ' | '.join(item_names),
+            "Qty": ' | '.join(quantities),
+            "Status": item.get('status'),
+            "Alasan": item.get('reason'),
+            "Mata Uang": item.get('currency'),
+            "Total Pengembalian Dana": item.get('refund_amount'),
+            "Alasan Teks dari Pembeli": item.get('text_reason'),
+            "Username Pembeli": item.get('user', {}).get('username'),
+            "Email Pembeli": item.get('user', {}).get('email'),
+            "Tanggal Update": return_update_time,
+            "Tanggal Jatuh Tempo": datetime.fromtimestamp(item.get('due_date')).strftime('%Y-%m-%d %H:%M:%S') if item.get('due_date') else None,
+            "Negotiation Status": item.get('negotiation_status'),
+            "Needs Logistics": "Ya" if item.get('needs_logistics') else "Tidak"
+        }
         processed_items.append(processed_item)
-    
-    # Clear input data from memory
-    del chunk_returns
     
     return processed_items
 
 def process_returns_with_manual_filter_global(export_id, access_token):
-    """Get ALL returns then filter manually by date - includes RRBOC returns like 2501010C4UCUTPB."""
-    app.logger.info("=== STARTING process_returns_with_manual_filter_global ===")
+    """
+    Get ALL returns, filter manually, then use BATCH processing to get details.
+    This is much more efficient than the previous N+1 query approach.
+    """
+    app.logger.info("=== STARTING process_returns_with_manual_filter_global (BATCH-OPTIMIZED) ===")
     
     if export_id not in export_progress_store:
         return
     
     export_data = export_progress_store[export_id]
-    export_data['status'] = 'processing'
-    export_data['current_step'] = 'Mengambil SEMUA data lalu filter manual berdasarkan tanggal...'
-    export_data['progress'] = 5.0
     
-    # Parse user date filter
+    def update_progress(progress, step):
+        export_data['progress'] = round(progress, 1)
+        export_data['current_step'] = step
+        app.logger.info(f"Progress {export_data['progress']}%: {export_data['current_step']}")
+
+    update_progress(5.0, 'Mengambil SEMUA data retur dari API...')
+    
     try:
-        from datetime import datetime
-        date_from = datetime.strptime(export_data['date_from'], '%Y-%m-%d') if export_data['date_from'] else None
-        date_to = datetime.strptime(export_data['date_to'], '%Y-%m-%d') if export_data['date_to'] else None
-        
-        # Add time bounds
-        if date_from:
-            date_from = date_from.replace(hour=0, minute=0, second=0)
-        if date_to:
-            date_to = date_to.replace(hour=23, minute=59, second=59)
-            
+        date_from = datetime.strptime(export_data['date_from'], '%Y-%m-%d').replace(hour=0, minute=0, second=0) if export_data['date_from'] else None
+        date_to = datetime.strptime(export_data['date_to'], '%Y-%m-%d').replace(hour=23, minute=59, second=59) if export_data['date_to'] else None
         app.logger.info(f"Manual filter range: {date_from} to {date_to}")
-    except:
-        date_from = None 
-        date_to = None
-        app.logger.warning("Invalid date format, will export all data")
-    
-    # Load checkpoint if exists
-    checkpoint = load_checkpoint(export_id)
-    start_page_no = checkpoint.get('page_no', 1)
-    
+    except (ValueError, TypeError):
+        date_from, date_to = None, None
+        app.logger.warning("Invalid date format, will export all data without date filtering.")
+
     shop_id = export_data['shop_id']
-    all_raw_data = []  # Store raw return data
-    total_processed = 0
+    all_raw_returns = []
+    page_no = 1
     
-    # Step 1: Get ALL returns without API date filter
-    page_no = start_page_no
-    max_pages_estimate = 100
-    
+    # Step 1: Fetch all raw return data without any page limit
     while True:
-        app.logger.info(f"=== FETCHING PAGE {page_no} ===")
+        # Instead of a percentage, we show the page number.
+        update_progress(10, f'Mengambil halaman {page_no} (semua data retur)...')
             
-        # Update progress for fetching
-        page_progress = min(page_no / max_pages_estimate, 0.9) * 50.0  # 50% for fetching
-        current_progress = 5.0 + page_progress
-        export_data['progress'] = round(min(55.0, current_progress), 1)
-        export_data['current_step'] = f'Mengambil halaman {page_no} (semua data)...'
-            
-        # API call WITHOUT date filter - get ALL returns including RRBOC
-        return_body = {"page_no": page_no, "page_size": 10}
-            
+        return_body = {"page_no": page_no, "page_size": 50} # Increased page size
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
                                         shop_id=shop_id, access_token=access_token, body=return_body)
             
@@ -1491,73 +1456,55 @@ def process_returns_with_manual_filter_global(export_id, access_token):
                 
         return_list = response.get('response', {}).get('return', [])
         if not return_list:
-            break
+            break # No more data
                 
-        # Store raw data for manual filtering
-        all_raw_data.extend(return_list)
-        total_processed += len(return_list)
-        
-        time.sleep(0.6)
+        all_raw_returns.extend(return_list)
         page_no += 1
-            
-    app.logger.info(f"Fetched {len(all_raw_data)} total returns from API")
+        time.sleep(0.3) # Be nice to the API
     
+    app.logger.info(f"Fetched {len(all_raw_returns)} total raw returns from API.")
+    update_progress(60.0, f'Menyaring {len(all_raw_returns)} data berdasarkan tanggal...')
+
     # Step 2: Manual date filtering
-    export_data['current_step'] = 'Filtering data berdasarkan tanggal...'
-    export_data['progress'] = 60.0
-    
     filtered_returns = []
     if date_from and date_to:
-        for return_item in all_raw_data:
+        for return_item in all_raw_returns:
             create_time = return_item.get('create_time')
-            if create_time:
-                try:
-                    return_date = datetime.fromtimestamp(create_time)
-                    if date_from <= return_date <= date_to:
-                        filtered_returns.append(return_item)
-                except:
-                    continue
+            if create_time and date_from <= datetime.fromtimestamp(create_time) <= date_to:
+                filtered_returns.append(return_item)
     else:
-        # No date filter, use all data
-        filtered_returns = all_raw_data
+        filtered_returns = all_raw_returns # No date filter, use all data
     
-    app.logger.info(f"After date filtering: {len(filtered_returns)} returns match criteria")
-    print(f"Manual filter result: {len(filtered_returns)}/{len(all_raw_data)} returns match date range")
+    app.logger.info(f"After date filtering: {len(filtered_returns)} returns match criteria.")
     
-    # Step 3: Process filtered data
-    export_data['current_step'] = 'Memproses data yang sudah difilter...'
-    export_data['progress'] = 75.0
-    
-    if filtered_returns:
-        processed_data = process_chunk_data(filtered_returns, 'returns', shop_id, access_token)
-        
-        # Log if specific return found
-        target_return = "2501010C4UCUTPB"
-        found_target = any(item.get('Nomor Retur') == target_return for item in processed_data)
-        if found_target:
-            app.logger.info(f"SUCCESS: Found target return {target_return} in filtered results!")
-            print(f"✅ Found {target_return} in export results!")
-        
-        export_data['data'] = processed_data
+    if not filtered_returns:
+        update_progress(100.0, 'Selesai! Tidak ada data retur dalam rentang tanggal yang dipilih.')
         export_data['status'] = 'completed'
-        export_data['progress'] = 100.0
-        export_data['current_step'] = f'Selesai! {len(processed_data)} retur berhasil diproses (MANUAL FILTER + RRBOC)'
-        
-        app.logger.info(f"Export completed with {len(processed_data)} records (MANUAL DATE FILTER)")
-    else:
-        export_data['status'] = 'completed'
-        export_data['progress'] = 100.0
-        export_data['current_step'] = 'Tidak ada data retur dalam rentang tanggal yang dipilih'
         export_data['data'] = []
+        return
+
+    update_progress(75.0, f'Mempersiapkan pengambilan detail untuk {len(filtered_returns)} retur...')
+
+    # Step 3: BATCH fetch all required details (order info, tracking, etc.)
+    order_sns_to_fetch = [r['order_sn'] for r in filtered_returns if 'order_sn' in r]
     
-    # Clean up
-    del all_raw_data
-    if 'filtered_returns' in locals():
-        del filtered_returns
+    # Define a callback to update progress from within the batch function
+    def progress_callback_for_batch(progress, step):
+        update_progress(progress, step)
+
+    order_details_map, tracking_numbers_map = get_batch_order_and_tracking_details(
+        shop_id, access_token, order_sns_to_fetch, progress_callback_for_batch
+    )
+
+    # Step 4: Format the final data for Excel
+    update_progress(95.0, 'Menyusun data akhir untuk file Excel...')
+    processed_data = format_return_data_for_excel(filtered_returns, order_details_map, tracking_numbers_map)
     
-    # Clear checkpoint after completion
-    if export_id in export_progress_store:
-        export_progress_store[export_id].pop('checkpoint', None)
+    export_data['data'] = processed_data
+    export_data['status'] = 'completed'
+    update_progress(100.0, f'Selesai! {len(processed_data)} retur berhasil diproses.')
+    
+    app.logger.info(f"Export completed with {len(processed_data)} records (BATCH-OPTIMIZED).")
 
 def process_returns_with_date_filter_global(export_id, access_token):
     """Process returns data WITH date filter (original logic) - excludes RRBOC returns."""
