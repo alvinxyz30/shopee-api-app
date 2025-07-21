@@ -184,11 +184,16 @@ def callback():
             app.logger.warning(f"Method 1 failed - get_shop_info error: {error}")
         elif info_data and 'response' in info_data:
             response_data = info_data.get('response', {})
-            if 'shop_name' in response_data and response_data['shop_name']:
-                shop_name = response_data['shop_name']
-                app.logger.info(f"SUCCESS: Found shop name via get_shop_info: {shop_name}")
+            app.logger.info(f"DEBUG: response_data keys: {list(response_data.keys())}")
+            app.logger.info(f"DEBUG: shop_name value: '{response_data.get('shop_name')}'")
+            app.logger.info(f"DEBUG: shop_name type: {type(response_data.get('shop_name'))}")
+            
+            extracted_shop_name = response_data.get('shop_name', '').strip()
+            if extracted_shop_name:
+                shop_name = extracted_shop_name
+                app.logger.info(f"SUCCESS: Found shop name via get_shop_info: '{shop_name}'")
             else:
-                app.logger.warning(f"Method 1 failed - no shop_name in response: {response_data}")
+                app.logger.warning(f"Method 1 failed - no valid shop_name in response: {response_data}")
         else:
             app.logger.warning(f"Method 1 failed - no response data: {info_data}")
             
@@ -206,9 +211,10 @@ def callback():
             
             if not profile_error and profile_data and 'response' in profile_data:
                 response_data = profile_data.get('response', {})
-                if 'shop_name' in response_data and response_data['shop_name']:
-                    shop_name = response_data['shop_name']
-                    app.logger.info(f"SUCCESS: Found shop name via get_profile: {shop_name}")
+                extracted_shop_name = response_data.get('shop_name', '').strip()
+                if extracted_shop_name:
+                    shop_name = extracted_shop_name
+                    app.logger.info(f"SUCCESS: Found shop name via get_profile: '{shop_name}'")
                     
         except Exception as e:
             app.logger.error(f"Exception in get_profile: {e}")
