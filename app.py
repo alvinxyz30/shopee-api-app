@@ -427,6 +427,61 @@ def test_date_filter_specific_shop():
     except Exception as e:
         results["return_detail_analysis"] = {"error": str(e)}
     
+    # Test 4: Try with status filter to see if ACCEPTED returns show up
+    try:
+        status_filter_body = {
+            "page_no": 1, 
+            "page_size": 20,
+            "create_time_from": int(datetime(2025, 1, 1).timestamp()),
+            "create_time_to": int(datetime(2025, 1, 2).timestamp()),
+            "status": "ACCEPTED"
+        }
+        
+        status_response, status_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                       shop_id=target_shop_id, access_token=access_token, body=status_filter_body)
+        
+        if status_response and not status_error:
+            status_returns = status_response.get('response', {}).get('return', [])
+            found_with_status = any(ret.get('return_sn') == target_return_sn for ret in status_returns)
+            
+            results["status_filter_test"] = {
+                "filter_used": "status=ACCEPTED + date filter",
+                "total_returns": len(status_returns),
+                "target_return_found": found_with_status,
+                "return_sns_found": [ret.get('return_sn') for ret in status_returns],
+                "error": None
+            }
+        else:
+            results["status_filter_test"] = {"error": status_error}
+    except Exception as e:
+        results["status_filter_test"] = {"error": str(e)}
+    
+    # Test 5: Try without any filters (just pagination) to see if return exists at all
+    try:
+        no_filter_body = {
+            "page_no": 1, 
+            "page_size": 50
+        }
+        
+        no_filter_response, no_filter_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                             shop_id=target_shop_id, access_token=access_token, body=no_filter_body)
+        
+        if no_filter_response and not no_filter_error:
+            all_returns = no_filter_response.get('response', {}).get('return', [])
+            found_no_filter = any(ret.get('return_sn') == target_return_sn for ret in all_returns)
+            
+            results["no_filter_test"] = {
+                "filter_used": "No filters (just pagination)",
+                "total_returns": len(all_returns),
+                "target_return_found": found_no_filter,
+                "return_sns_sample": [ret.get('return_sn') for ret in all_returns[:5]],
+                "error": None
+            }
+        else:
+            results["no_filter_test"] = {"error": no_filter_error}
+    except Exception as e:
+        results["no_filter_test"] = {"error": str(e)}
+    
     return {
         "shop_id": target_shop_id,
         "target_return_sn": target_return_sn,
