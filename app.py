@@ -312,6 +312,103 @@ def test_shop_info():
     
     return results
 
+@app.route('/test_date_filter_specific_shop')
+def test_date_filter_specific_shop():
+    """Test apakah date filtering berfungsi dengan return spesifik di shop tertentu."""
+    shops = session.get('shops', {})
+    if not shops:
+        return {"error": "No shops connected"}
+    
+    # Test dengan shop_id 59414059 untuk mencari return 2501010C4UCUTPB
+    target_shop_id = "59414059"
+    target_return_sn = "2501010C4UCUTPB"
+    
+    if target_shop_id not in shops:
+        return {"error": f"Shop {target_shop_id} not connected. Please authorize it first."}
+    
+    shop_data = shops[target_shop_id]
+    access_token = shop_data['access_token']
+    
+    results = {}
+    
+    # Test 1: Filter tanggal 1 Januari 2025 (tanggal return dibuat)
+    try:
+        from datetime import datetime, timedelta
+        target_date = datetime(2025, 1, 1)  # 1 Januari 2025
+        start_date = target_date.replace(hour=0, minute=0, second=0)
+        end_date = target_date.replace(hour=23, minute=59, second=59)
+        
+        filter_body = {
+            "page_no": 1, 
+            "page_size": 20,
+            "create_time_from": int(start_date.timestamp()),
+            "create_time_to": int(end_date.timestamp())
+        }
+        
+        filter_response, filter_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                      shop_id=target_shop_id, access_token=access_token, body=filter_body)
+        
+        if filter_response and not filter_error:
+            returns_filtered = filter_response.get('response', {}).get('return', [])
+            found_target = any(ret.get('return_sn') == target_return_sn for ret in returns_filtered)
+            
+            results["jan_1_2025_filter"] = {
+                "filter_range": f"{start_date.strftime('%Y-%m-%d %H:%M')} to {end_date.strftime('%Y-%m-%d %H:%M')}",
+                "total_returns": len(returns_filtered),
+                "target_return_found": found_target,
+                "return_sns_found": [ret.get('return_sn') for ret in returns_filtered],
+                "error": None
+            }
+        else:
+            results["jan_1_2025_filter"] = {
+                "error": filter_error,
+                "filter_range": f"{start_date.strftime('%Y-%m-%d %H:%M')} to {end_date.strftime('%Y-%m-%d %H:%M')}"
+            }
+    except Exception as e:
+        results["jan_1_2025_filter"] = {"error": str(e)}
+    
+    # Test 2: Filter tanggal yang lebih luas (Desember 2024 - Januari 2025)
+    try:
+        wide_start = datetime(2024, 12, 1)
+        wide_end = datetime(2025, 1, 31, 23, 59, 59)
+        
+        wide_filter_body = {
+            "page_no": 1, 
+            "page_size": 50,
+            "create_time_from": int(wide_start.timestamp()),
+            "create_time_to": int(wide_end.timestamp())
+        }
+        
+        wide_response, wide_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                                   shop_id=target_shop_id, access_token=access_token, body=wide_filter_body)
+        
+        if wide_response and not wide_error:
+            wide_returns = wide_response.get('response', {}).get('return', [])
+            found_target_wide = any(ret.get('return_sn') == target_return_sn for ret in wide_returns)
+            
+            results["wide_filter_dec2024_jan2025"] = {
+                "filter_range": f"{wide_start.strftime('%Y-%m-%d')} to {wide_end.strftime('%Y-%m-%d')}",
+                "total_returns": len(wide_returns),
+                "target_return_found": found_target_wide,
+                "return_sns_found": [ret.get('return_sn') for ret in wide_returns],
+                "error": None
+            }
+        else:
+            results["wide_filter_dec2024_jan2025"] = {
+                "error": wide_error,
+                "filter_range": f"{wide_start.strftime('%Y-%m-%d')} to {wide_end.strftime('%Y-%m-%d')}"
+            }
+    except Exception as e:
+        results["wide_filter_dec2024_jan2025"] = {"error": str(e)}
+    
+    return {
+        "shop_id": target_shop_id,
+        "target_return_sn": target_return_sn,
+        "expected_date": "2025-01-01 07:58:52",
+        "test_results": results,
+        "note": "Testing if return 2501010C4UCUTPB appears in get_return_list with correct date filter"
+    }
+
 @app.route('/test_date_filter')
 def test_date_filter():
     """Test apakah date filtering berfungsi dengan benar pada returns API."""
