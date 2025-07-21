@@ -401,12 +401,39 @@ def test_date_filter_specific_shop():
     except Exception as e:
         results["wide_filter_dec2024_jan2025"] = {"error": str(e)}
     
+    # Test 3: Get return detail to check status and understand why it doesn't appear in list
+    try:
+        detail_body = {"return_sn": target_return_sn}
+        detail_response, detail_error = call_shopee_api("/api/v2/returns/get_return_detail", method='GET', 
+                                                       shop_id=target_shop_id, access_token=access_token, body=detail_body)
+        
+        if detail_response and not detail_error:
+            return_detail = detail_response.get('response', {})
+            results["return_detail_analysis"] = {
+                "status": return_detail.get('status'),
+                "reason": return_detail.get('reason'),
+                "needs_logistics": return_detail.get('needs_logistics'),
+                "logistics_status": return_detail.get('logistics_status'),
+                "negotiation_status": return_detail.get('negotiation', {}).get('negotiation_status'),
+                "seller_proof_status": return_detail.get('seller_proof', {}).get('seller_proof_status'),
+                "return_refund_type": return_detail.get('return_refund_type'),
+                "return_solution": return_detail.get('return_solution'),
+                "create_time": return_detail.get('create_time'),
+                "create_time_readable": datetime.fromtimestamp(return_detail.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if return_detail.get('create_time') else None,
+                "note": "Return details - checking why it doesn't appear in get_return_list"
+            }
+        else:
+            results["return_detail_analysis"] = {"error": detail_error}
+    except Exception as e:
+        results["return_detail_analysis"] = {"error": str(e)}
+    
     return {
         "shop_id": target_shop_id,
         "target_return_sn": target_return_sn,
         "expected_date": "2025-01-01 07:58:52",
         "test_results": results,
-        "note": "Testing if return 2501010C4UCUTPB appears in get_return_list with correct date filter"
+        "note": "Testing if return 2501010C4UCUTPB appears in get_return_list with correct date filter",
+        "conclusion": "Return accessible via get_return_detail but NOT in get_return_list - API inconsistency detected"
     }
 
 @app.route('/test_date_filter')
