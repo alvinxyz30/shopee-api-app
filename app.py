@@ -1079,7 +1079,7 @@ def export_data():
     data_type = request.form.get('data_type')
     date_from_str = request.form.get('date_from', '')
     date_to_str = request.form.get('date_to', '')
-    export_mode = request.form.get('export_mode', 'date_filter')  # Default to date filter
+    # Single mode: manual date filter that includes RRBOC
     
     shop_data = session.get('shops', {}).get(shop_id)
     if not shop_data:
@@ -1087,14 +1087,13 @@ def export_data():
         return redirect(url_for('dashboard'))
     
     # Initialize progress tracking in global store and session
-    export_id = f"{shop_id}_{data_type}_{export_mode}_{int(time.time())}"
+    export_id = f"{shop_id}_{data_type}_manual_filter_{int(time.time())}"
     export_data = {
         'export_id': export_id,
         'shop_id': shop_id,
         'data_type': data_type,
         'date_from': date_from_str,
         'date_to': date_to_str,
-        'export_mode': export_mode,
         'status': 'initializing',
         'progress': 0,
         'total_estimated': 0,
@@ -1215,10 +1214,7 @@ def start_chunked_export():
                 current_export = export_progress_store[export_id]
                 
                 if current_export['data_type'] == 'returns':
-                    if current_export['export_mode'] == 'all_data':
-                        process_returns_all_data_global(export_id, access_token)
-                    else:
-                        process_returns_with_date_filter_global(export_id, access_token)
+                    process_returns_with_manual_filter_global(export_id, access_token)
                 elif current_export['data_type'] == 'orders':
                     process_orders_chunked_global(export_id, access_token)
                 elif current_export['data_type'] == 'products':
@@ -1431,128 +1427,140 @@ def process_chunk_data(chunk_returns, data_type='returns', shop_id=None, access_
     
     return processed_items
 
-def process_returns_all_data_global(export_id, access_token):
-    """Process ALL returns data WITHOUT date filter to include RRBOC returns."""
-    app.logger.info("=== STARTING process_returns_chunked_global (NO DATE FILTER) ===")
+def process_returns_with_manual_filter_global(export_id, access_token):
+    """Get ALL returns then filter manually by date - includes RRBOC returns like 2501010C4UCUTPB."""
+    app.logger.info("=== STARTING process_returns_with_manual_filter_global ===")
     
     if export_id not in export_progress_store:
         return
     
     export_data = export_progress_store[export_id]
     export_data['status'] = 'processing'
-    export_data['current_step'] = 'Mengambil SEMUA data return tanpa filter...'
+    export_data['current_step'] = 'Mengambil SEMUA data lalu filter manual berdasarkan tanggal...'
     export_data['progress'] = 5.0
+    
+    # Parse user date filter
+    try:
+        from datetime import datetime
+        date_from = datetime.strptime(export_data['date_from'], '%Y-%m-%d') if export_data['date_from'] else None
+        date_to = datetime.strptime(export_data['date_to'], '%Y-%m-%d') if export_data['date_to'] else None
+        
+        # Add time bounds
+        if date_from:
+            date_from = date_from.replace(hour=0, minute=0, second=0)
+        if date_to:
+            date_to = date_to.replace(hour=23, minute=59, second=59)
+            
+        app.logger.info(f"Manual filter range: {date_from} to {date_to}")
+    except:
+        date_from = None 
+        date_to = None
+        app.logger.warning("Invalid date format, will export all data")
     
     # Load checkpoint if exists
     checkpoint = load_checkpoint(export_id)
     start_page_no = checkpoint.get('page_no', 1)
     
-    app.logger.info(f"Shop ID: {export_data['shop_id']}")
-    app.logger.info(f"NO DATE FILTER - getting ALL returns including RRBOC")
-    app.logger.info(f"Starting from page: {start_page_no}")
-    
     shop_id = export_data['shop_id']
-    all_processed_data = []
+    all_raw_data = []  # Store raw return data
     total_processed = 0
     
-    # Loop pagination untuk semua data tanpa filter
+    # Step 1: Get ALL returns without API date filter
     page_no = start_page_no
     max_pages_estimate = 100
     
     while True:
-        app.logger.info(f"=== ALL RETURNS PAGE {page_no} ===")
+        app.logger.info(f"=== FETCHING PAGE {page_no} ===")
             
-        # Update progress
-        page_progress = min(page_no / max_pages_estimate, 0.9) * 75.0
-        current_progress = 10.0 + page_progress
-        export_data['progress'] = round(min(85.0, current_progress), 1)
-        export_data['current_step'] = f'Halaman {page_no} - Mengambil semua return...'
+        # Update progress for fetching
+        page_progress = min(page_no / max_pages_estimate, 0.9) * 50.0  # 50% for fetching
+        current_progress = 5.0 + page_progress
+        export_data['progress'] = round(min(55.0, current_progress), 1)
+        export_data['current_step'] = f'Mengambil halaman {page_no} (semua data)...'
             
-        # Save checkpoint every 10 pages
-        if page_no % 10 == 0:
-            checkpoint_data = {
-                'page_no': page_no,
-                'total_processed': total_processed
-            }
-            save_checkpoint(export_id, checkpoint_data)
+        # API call WITHOUT date filter - get ALL returns including RRBOC
+        return_body = {"page_no": page_no, "page_size": 10}
             
-        app.logger.info(f"Progress: {export_data['progress']}% - Page {page_no}")
-            
-        # API call - TANPA date filter untuk dapat semua return termasuk RRBOC
-        return_body = {
-            "page_no": page_no, 
-            "page_size": 10
-        }
-            
-        print(f"API call page {page_no} WITHOUT date filter")
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
                                         shop_id=shop_id, access_token=access_token, body=return_body)
             
         if error:
-            app.logger.error(f"Returns API error: {error}")
-            save_checkpoint(export_id, {
-                'page_no': page_no,
-                'total_processed': total_processed,
-                'error': True
-            })
             export_data['error'] = f"Gagal mengambil daftar retur: {error}"
             export_data['status'] = 'error'
             return
                 
-        # Process response
         return_list = response.get('response', {}).get('return', [])
-        app.logger.info(f"Found {len(return_list)} returns on page {page_no}")
-            
         if not return_list:
-            app.logger.info(f"No more returns found, breaking pagination loop")
-            print(f"No more data, export complete")
             break
                 
-        # Process current page data immediately
-        if return_list:
-            processed_page_data = process_chunk_data(return_list, 'returns', shop_id, access_token)
-            all_processed_data.extend(processed_page_data)
-            total_processed += len(return_list)
-            
-            app.logger.info(f"Page {page_no}: processed {len(processed_page_data)} items, total: {total_processed}")
-            print(f"Page {page_no}: {len(processed_page_data)} items processed")
-            
-        # Rate limiting delay
+        # Store raw data for manual filtering
+        all_raw_data.extend(return_list)
+        total_processed += len(return_list)
+        
         time.sleep(0.6)
         page_no += 1
             
-        # Safety limit untuk prevent infinite loop
         if page_no > 200:
-            app.logger.info(f"Reached safety limit of 200 pages")
-            print(f"Safety limit reached")
             break
     
-    # Finalize export
-    export_data['current_step'] = 'Menyelesaikan export...'
-    export_data['progress'] = 95.0
+    app.logger.info(f"Fetched {len(all_raw_data)} total returns from API")
     
-    if all_processed_data:
-        export_data['data'] = all_processed_data
+    # Step 2: Manual date filtering
+    export_data['current_step'] = 'Filtering data berdasarkan tanggal...'
+    export_data['progress'] = 60.0
+    
+    filtered_returns = []
+    if date_from and date_to:
+        for return_item in all_raw_data:
+            create_time = return_item.get('create_time')
+            if create_time:
+                try:
+                    return_date = datetime.fromtimestamp(create_time)
+                    if date_from <= return_date <= date_to:
+                        filtered_returns.append(return_item)
+                except:
+                    continue
+    else:
+        # No date filter, use all data
+        filtered_returns = all_raw_data
+    
+    app.logger.info(f"After date filtering: {len(filtered_returns)} returns match criteria")
+    print(f"Manual filter result: {len(filtered_returns)}/{len(all_raw_data)} returns match date range")
+    
+    # Step 3: Process filtered data
+    export_data['current_step'] = 'Memproses data yang sudah difilter...'
+    export_data['progress'] = 75.0
+    
+    if filtered_returns:
+        processed_data = process_chunk_data(filtered_returns, 'returns', shop_id, access_token)
+        
+        # Log if specific return found
+        target_return = "2501010C4UCUTPB"
+        found_target = any(item.get('Nomor Retur') == target_return for item in processed_data)
+        if found_target:
+            app.logger.info(f"SUCCESS: Found target return {target_return} in filtered results!")
+            print(f"✅ Found {target_return} in export results!")
+        
+        export_data['data'] = processed_data
         export_data['status'] = 'completed'
         export_data['progress'] = 100.0
-        export_data['current_step'] = f'Selesai! {len(all_processed_data)} retur berhasil diproses (SEMUA DATA TANPA FILTER)'
+        export_data['current_step'] = f'Selesai! {len(processed_data)} retur berhasil diproses (MANUAL FILTER + RRBOC)'
         
-        print(f"=== EXPORT COMPLETED (NO DATE FILTER) ===")
-        print(f"Total records processed: {len(all_processed_data)}")
-        print(f"Includes RRBOC returns like 2501010C4UCUTPB")
-        app.logger.info(f"Export completed with {len(all_processed_data)} records (NO DATE FILTER)")
-        
-        # Clear checkpoint after successful completion
-        if export_id in export_progress_store:
-            export_progress_store[export_id].pop('checkpoint', None)
+        app.logger.info(f"Export completed with {len(processed_data)} records (MANUAL DATE FILTER)")
     else:
         export_data['status'] = 'completed'
         export_data['progress'] = 100.0
-        export_data['current_step'] = 'Tidak ada data retur ditemukan'
+        export_data['current_step'] = 'Tidak ada data retur dalam rentang tanggal yang dipilih'
         export_data['data'] = []
     
-    # Clear processed data from memory
-    del all_processed_data
+    # Clean up
+    del all_raw_data
+    if 'filtered_returns' in locals():
+        del filtered_returns
+    
+    # Clear checkpoint after completion
+    if export_id in export_progress_store:
+        export_progress_store[export_id].pop('checkpoint', None)
 
 def process_returns_with_date_filter_global(export_id, access_token):
     """Process returns data WITH date filter (original logic) - excludes RRBOC returns."""
