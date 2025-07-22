@@ -2136,7 +2136,7 @@ def test_return_list_limits(shop_id, access_token):
     
     # Test 1: Maximum page size
     app.logger.info("Testing maximum page size for get_return_list")
-    page_sizes = [10, 20, 50, 100]  # Test realistic page sizes (max likely 50-100)
+    page_sizes = [10, 20, 50, 100, 200]  # Test realistic page sizes including 200
     
     for page_size in page_sizes:
         start_time = time.time()
@@ -2355,7 +2355,7 @@ def test_unlimited_return_list(shop_id, access_token):
         # Use maximum page size possible (testing up to 2000)
         body = {
             "page_no": page_no,
-            "page_size": 50  # Realistic page size
+            "page_size": 200  # Test higher page size
         }
         
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
