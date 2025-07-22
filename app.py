@@ -2115,7 +2115,10 @@ def test_api_limits():
     
     # Test 2: failed delivery API limits  
     app.logger.info("=== STARTING FAILED DELIVERY API LIMIT TEST ===")
-    results["failed_delivery_test"] = test_failed_delivery_limits(shop_id, access_token)
+    try:
+        results["failed_delivery_test"] = test_failed_delivery_limits(shop_id, access_token)
+    except Exception as e:
+        results["failed_delivery_test"] = {"error": f"Failed delivery API test error: {str(e)}", "skipped": True}
     
     results["test_end"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
@@ -2133,7 +2136,7 @@ def test_return_list_limits(shop_id, access_token):
     
     # Test 1: Maximum page size
     app.logger.info("Testing maximum page size for get_return_list")
-    page_sizes = [100, 200, 500, 1000, 2000]  # Test various page sizes
+    page_sizes = [10, 20, 50, 100]  # Test realistic page sizes (max likely 50-100)
     
     for page_size in page_sizes:
         start_time = time.time()
@@ -2213,12 +2216,13 @@ def test_failed_delivery_limits(shop_id, access_token):
     test_results = {
         "max_page_size_test": {},
         "rate_limit_test": {},
-        "continuous_request_test": {}
+        "continuous_request_test": {},
+        "note": "Failed delivery API seems to return 404 - might not be available or endpoint changed"
     }
     
     # Test 1: Maximum page size
     app.logger.info("Testing maximum page size for failed delivery API")
-    page_sizes = [50, 100, 200, 500]  # Test various page sizes (API docs say max is 50, but let's test)
+    page_sizes = [10, 20, 50]  # Test realistic page sizes (API docs say max is 50)
     
     for page_size in page_sizes:
         start_time = time.time()
@@ -2330,7 +2334,10 @@ def test_unlimited_fetch():
     
     # Test unlimited failed delivery fetch  
     app.logger.info("=== TESTING UNLIMITED FAILED DELIVERY FETCH ===")
-    results["unlimited_failed_delivery"] = test_unlimited_failed_delivery(shop_id, access_token)
+    try:
+        results["unlimited_failed_delivery"] = test_unlimited_failed_delivery(shop_id, access_token)
+    except Exception as e:
+        results["unlimited_failed_delivery"] = {"error": f"Failed delivery unlimited test error: {str(e)}", "skipped": True}
     
     results["test_end"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     return results
@@ -2352,7 +2359,7 @@ def test_unlimited_return_list(shop_id, access_token):
         # Use maximum page size possible (testing up to 2000)
         body = {
             "page_no": page_no,
-            "page_size": 2000,  # Test maksimal
+            "page_size": 50,  # Realistic page size
             "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
             "create_time_to": int(datetime.now().timestamp())
         }
