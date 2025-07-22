@@ -1730,18 +1730,43 @@ def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, pro
     """Mengambil semua data failed delivery dari API logistics/get_failed_delivery_list dengan chunking tanggal."""
     app.logger.info(f"Fetching failed delivery data for shop {shop_id} from {date_from} to {date_to}")
     
-    # TEMPORARY WORKAROUND: Return empty list if API is not available
-    # This prevents export from failing due to 404 on failed delivery endpoint
+    # DEBUG: Detailed API testing and error analysis
+    app.logger.info("=== DEBUGGING FAILED DELIVERY API ===")
     try:
-        # Quick test if endpoint is available
-        test_body = {"page_size": 1, "cursor": "", "create_time_from": int(date_from.timestamp()), "create_time_to": int(date_to.timestamp())}
+        # Test with minimal parameters first
+        test_body = {
+            "page_size": 1, 
+            "cursor": "", 
+            "create_time_from": int(date_from.timestamp()), 
+            "create_time_to": int(date_to.timestamp())
+        }
+        app.logger.info(f"Testing failed delivery API with params: {test_body}")
         test_response, test_error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET',
                                                    shop_id=shop_id, access_token=access_token, body=test_body, max_retries=1)
-        if test_error and "404" in str(test_error):
-            app.logger.warning("Failed delivery API endpoint not available (404) - skipping failed delivery data")
+        
+        app.logger.info(f"API Test Result - Error: {test_error}")
+        app.logger.info(f"API Test Result - Response: {test_response}")
+        
+        if test_error:
+            if "404" in str(test_error):
+                app.logger.error("❌ FAILED DELIVERY API: 404 Not Found - Endpoint may be deprecated or moved")
+            elif "403" in str(test_error):
+                app.logger.error("❌ FAILED DELIVERY API: 403 Forbidden - Check app permissions/scope in Shopee Partner Dashboard")
+            elif "401" in str(test_error):
+                app.logger.error("❌ FAILED DELIVERY API: 401 Unauthorized - Token or signature issue")
+            elif "400" in str(test_error):
+                app.logger.error("❌ FAILED DELIVERY API: 400 Bad Request - Check parameter format")
+            else:
+                app.logger.error(f"❌ FAILED DELIVERY API: Other error - {test_error}")
+            
+            app.logger.warning("⚠️ Returning empty list to allow export to continue without failed delivery data")
             return []
-    except:
-        app.logger.warning("Failed delivery API test failed - skipping failed delivery data")
+        else:
+            app.logger.info("✅ Failed delivery API test successful - proceeding with full fetch")
+            
+    except Exception as e:
+        app.logger.error(f"❌ Failed delivery API test exception: {str(e)}")
+        app.logger.warning("⚠️ Returning empty list due to exception")
         return []
         
     all_failed_deliveries = []
