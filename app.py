@@ -2139,8 +2139,8 @@ def test_return_list_limits(shop_id, access_token):
         start_time = time.time()
         
         body = {
+            "page_no": 1,
             "page_size": page_size,
-            "cursor": "",
             "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
             "create_time_to": int(datetime.now().timestamp())
         }
@@ -2172,8 +2172,8 @@ def test_return_list_limits(shop_id, access_token):
         start_time = time.time()
         
         body = {
+            "page_no": 1,
             "page_size": 50,
-            "cursor": "",
             "create_time_from": int((datetime.now() - timedelta(days=7)).timestamp()),
             "create_time_to": int(datetime.now().timestamp())
         }
@@ -2351,8 +2351,8 @@ def test_unlimited_return_list(shop_id, access_token):
         
         # Use maximum page size possible (testing up to 2000)
         body = {
-            "page_size": 2000,  # Test maksimal
             "page_no": page_no,
+            "page_size": 2000,  # Test maksimal
             "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
             "create_time_to": int(datetime.now().timestamp())
         }
