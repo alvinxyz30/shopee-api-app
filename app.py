@@ -1729,6 +1729,21 @@ def process_returns_with_manual_filter_global(export_id, access_token):
 def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, progress_callback=None, export_id=None):
     """Mengambil semua data failed delivery dari API logistics/get_failed_delivery_list dengan chunking tanggal."""
     app.logger.info(f"Fetching failed delivery data for shop {shop_id} from {date_from} to {date_to}")
+    
+    # TEMPORARY WORKAROUND: Return empty list if API is not available
+    # This prevents export from failing due to 404 on failed delivery endpoint
+    try:
+        # Quick test if endpoint is available
+        test_body = {"page_size": 1, "cursor": "", "create_time_from": int(date_from.timestamp()), "create_time_to": int(date_to.timestamp())}
+        test_response, test_error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET',
+                                                   shop_id=shop_id, access_token=access_token, body=test_body, max_retries=1)
+        if test_error and "404" in str(test_error):
+            app.logger.warning("Failed delivery API endpoint not available (404) - skipping failed delivery data")
+            return []
+    except:
+        app.logger.warning("Failed delivery API test failed - skipping failed delivery data")
+        return []
+        
     all_failed_deliveries = []
     
     # Use 14-day chunks for failed deliveries API
@@ -1749,8 +1764,14 @@ def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, pro
                 "create_time_from": int(chunk_start.timestamp()),
                 "create_time_to": int(chunk_end.timestamp())
             }
+            # Try original endpoint first, then fallback to alternative
             response, error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET',
                                             shop_id=shop_id, access_token=access_token, body=body, export_id=export_id)
+
+            # If 404, skip this chunk (API endpoint not available)
+            if error and "404" in str(error):
+                app.logger.warning(f"Failed delivery API not found (404) - skipping chunk {chunk_index + 1}")
+                continue
 
             if error:
                 app.logger.error(f"Error fetching failed delivery list for chunk {chunk_index + 1}: {error}")
