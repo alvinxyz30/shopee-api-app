@@ -132,14 +132,22 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
     full_url = f"{BASE_URL}{path}"
     headers = {'Content-Type': 'application/json'}
 
+    start_time = time.time() # Start timer
+
     # Retry mechanism with exponential backoff
     for attempt in range(max_retries):
         try:
+            response = None
             if method.upper() == 'POST':
                 response = requests.post(full_url, params=params, json=body, headers=headers, timeout=30)
             else:
                 response = requests.get(full_url, params={**params, **(body or {})}, headers=headers, timeout=30)
             
+            end_time = time.time() # End timer
+            time_taken = round(end_time - start_time, 3)
+            
+            app.logger.info(f"API Call: {path}, Method: {method}, Params: {body or {}}, Status: {response.status_code}, Time: {time_taken}s")
+
             # Handle HTTP 429 Too Many Requests
             if response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', 2 ** attempt))
@@ -150,6 +158,17 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
             response.raise_for_status()
             response_data = response.json()
             
+            # Log number of items returned
+            item_count = 0
+            if 'response' in response_data and isinstance(response_data['response'], dict):
+                if 'return' in response_data['response'] and isinstance(response_data['response']['return'], list):
+                    item_count = len(response_data['response']['return'])
+                elif 'failed_delivery_list' in response_data['response'] and isinstance(response_data['response']['failed_delivery_list'], list):
+                    item_count = len(response_data['response']['failed_delivery_list'])
+                elif 'order_list' in response_data['response'] and isinstance(response_data['response']['order_list'], list):
+                    item_count = len(response_data['response']['order_list'])
+            app.logger.info(f"API Response: {path}, Items Returned: {item_count}")
+
             if response_data.get("error"):
                 error_msg = f"Shopee API Error: {response_data.get('message', 'Unknown error')} (Req ID: {response_data.get('request_id')})"
                 app.logger.error(error_msg)
@@ -2051,6 +2070,371 @@ def download_export():
         app.logger.info(f"Auto-cleanup: Removed export data {export_id} from memory after download")
     
     return response
+
+# ==============================================================================
+# API LIMIT TESTING FUNCTIONS
+# ==============================================================================
+
+@app.route('/test_api_limits')
+def test_api_limits():
+    """Test API limits untuk get_return_list dan failed delivery APIs tanpa batasan speed."""
+    import time
+    from datetime import datetime, timedelta
+    
+    shop_id = session.get('shop_id')
+    access_token = session.get('access_token')
+    
+    if not shop_id or not access_token:
+        return {"error": "Shop ID dan access token diperlukan"}
+    
+    results = {
+        "test_start": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "shop_id": shop_id,
+        "return_list_test": {},
+        "failed_delivery_test": {},
+        "summary": {}
+    }
+    
+    # Test 1: get_return_list API limits
+    app.logger.info("=== STARTING RETURN LIST API LIMIT TEST ===")
+    results["return_list_test"] = test_return_list_limits(shop_id, access_token)
+    
+    # Test 2: failed delivery API limits  
+    app.logger.info("=== STARTING FAILED DELIVERY API LIMIT TEST ===")
+    results["failed_delivery_test"] = test_failed_delivery_limits(shop_id, access_token)
+    
+    results["test_end"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    return results
+
+def test_return_list_limits(shop_id, access_token):
+    """Test limits untuk get_return_list API."""
+    import time
+    
+    test_results = {
+        "max_page_size_test": {},
+        "rate_limit_test": {},
+        "continuous_request_test": {}
+    }
+    
+    # Test 1: Maximum page size
+    app.logger.info("Testing maximum page size for get_return_list")
+    page_sizes = [100, 200, 500, 1000, 2000]  # Test various page sizes
+    
+    for page_size in page_sizes:
+        start_time = time.time()
+        
+        body = {
+            "page_size": page_size,
+            "cursor": "",
+            "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
+            "create_time_to": int(datetime.now().timestamp())
+        }
+        
+        response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=body)
+        
+        end_time = time.time()
+        request_duration = end_time - start_time
+        
+        test_results["max_page_size_test"][f"page_size_{page_size}"] = {
+            "success": error is None,
+            "error": error,
+            "response_time": round(request_duration, 3),
+            "items_returned": len(response.get('response', {}).get('return', [])) if response else 0,
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        app.logger.info(f"Page size {page_size}: Success={error is None}, Duration={request_duration:.3f}s, Items={len(response.get('response', {}).get('return', [])) if response else 0}")
+        
+        # Small delay to be respectful
+        time.sleep(0.1)
+    
+    # Test 2: Rate limit test - rapid requests
+    app.logger.info("Testing rate limits with rapid requests")
+    rapid_requests = []
+    
+    for i in range(20):  # Test 20 rapid requests
+        start_time = time.time()
+        
+        body = {
+            "page_size": 50,
+            "cursor": "",
+            "create_time_from": int((datetime.now() - timedelta(days=7)).timestamp()),
+            "create_time_to": int(datetime.now().timestamp())
+        }
+        
+        response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=body)
+        
+        end_time = time.time()
+        request_duration = end_time - start_time
+        
+        request_result = {
+            "request_number": i + 1,
+            "success": error is None,
+            "error": error,
+            "response_time": round(request_duration, 3),
+            "items_returned": len(response.get('response', {}).get('return', [])) if response else 0,
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        }
+        
+        rapid_requests.append(request_result)
+        
+        app.logger.info(f"Rapid request {i+1}: Success={error is None}, Duration={request_duration:.3f}s")
+        
+        # Check if we hit rate limit
+        if error and "rate" in str(error).lower():
+            app.logger.warning(f"Rate limit hit at request {i+1}")
+            break
+    
+    test_results["rate_limit_test"] = rapid_requests
+    
+    return test_results
+
+def test_failed_delivery_limits(shop_id, access_token):
+    """Test limits untuk failed delivery API."""
+    import time
+    
+    test_results = {
+        "max_page_size_test": {},
+        "rate_limit_test": {},
+        "continuous_request_test": {}
+    }
+    
+    # Test 1: Maximum page size
+    app.logger.info("Testing maximum page size for failed delivery API")
+    page_sizes = [50, 100, 200, 500]  # Test various page sizes (API docs say max is 50, but let's test)
+    
+    for page_size in page_sizes:
+        start_time = time.time()
+        
+        body = {
+            "page_size": page_size,
+            "cursor": "",
+            "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
+            "create_time_to": int(datetime.now().timestamp())
+        }
+        
+        response, error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=body)
+        
+        end_time = time.time()
+        request_duration = end_time - start_time
+        
+        test_results["max_page_size_test"][f"page_size_{page_size}"] = {
+            "success": error is None,
+            "error": error,
+            "response_time": round(request_duration, 3),
+            "items_returned": len(response.get('response', {}).get('failed_delivery_list', [])) if response else 0,
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        app.logger.info(f"Failed delivery page size {page_size}: Success={error is None}, Duration={request_duration:.3f}s, Items={len(response.get('response', {}).get('failed_delivery_list', [])) if response else 0}")
+        
+        # Small delay to be respectful
+        time.sleep(0.1)
+    
+    # Test 2: Rate limit test - rapid requests
+    app.logger.info("Testing failed delivery API rate limits")
+    rapid_requests = []
+    
+    for i in range(15):  # Test 15 rapid requests
+        start_time = time.time()
+        
+        body = {
+            "page_size": 50,
+            "cursor": "",
+            "create_time_from": int((datetime.now() - timedelta(days=7)).timestamp()),
+            "create_time_to": int(datetime.now().timestamp())
+        }
+        
+        response, error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=body)
+        
+        end_time = time.time()
+        request_duration = end_time - start_time
+        
+        request_result = {
+            "request_number": i + 1,
+            "success": error is None,
+            "error": error,
+            "response_time": round(request_duration, 3),
+            "items_returned": len(response.get('response', {}).get('failed_delivery_list', [])) if response else 0,
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        }
+        
+        rapid_requests.append(request_result)
+        
+        app.logger.info(f"Failed delivery rapid request {i+1}: Success={error is None}, Duration={request_duration:.3f}s")
+        
+        # Check if we hit rate limit
+        if error and "rate" in str(error).lower():
+            app.logger.warning(f"Failed delivery rate limit hit at request {i+1}")
+            break
+    
+    test_results["rate_limit_test"] = rapid_requests
+    
+    return test_results
+
+@app.route('/test_unlimited_fetch')
+def test_unlimited_fetch():
+    """Test fetching data dengan menghilangkan semua limitasi speed dan page size."""
+    import time
+    from datetime import datetime, timedelta
+    
+    shop_id = session.get('shop_id')
+    access_token = session.get('access_token')
+    
+    if not shop_id or not access_token:
+        return {"error": "Shop ID dan access token diperlukan"}
+    
+    results = {
+        "test_start": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "shop_id": shop_id,
+        "unlimited_return_list": {},
+        "unlimited_failed_delivery": {}
+    }
+    
+    # Test unlimited return list fetch
+    app.logger.info("=== TESTING UNLIMITED RETURN LIST FETCH ===")
+    results["unlimited_return_list"] = test_unlimited_return_list(shop_id, access_token)
+    
+    # Test unlimited failed delivery fetch  
+    app.logger.info("=== TESTING UNLIMITED FAILED DELIVERY FETCH ===")
+    results["unlimited_failed_delivery"] = test_unlimited_failed_delivery(shop_id, access_token)
+    
+    results["test_end"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    return results
+
+def test_unlimited_return_list(shop_id, access_token):
+    """Test get_return_list tanpa batasan speed dan dengan page size maksimal."""
+    import time
+    
+    test_start = time.time()
+    all_returns = []
+    page_no = 1
+    max_pages = 100  # Batasan untuk mencegah infinite loop
+    
+    app.logger.info(f"Starting unlimited return list fetch - no delays, max page size")
+    
+    while page_no <= max_pages:
+        start_time = time.time()
+        
+        # Use maximum page size possible (testing up to 2000)
+        body = {
+            "page_size": 2000,  # Test maksimal
+            "page_no": page_no,
+            "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
+            "create_time_to": int(datetime.now().timestamp())
+        }
+        
+        response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=body)
+        
+        end_time = time.time()
+        request_duration = end_time - start_time
+        
+        if error:
+            app.logger.error(f"Error on page {page_no}: {error}")
+            break
+            
+        if not response or 'response' not in response:
+            app.logger.warning(f"No response data on page {page_no}")
+            break
+            
+        return_list = response.get('response', {}).get('return', [])
+        
+        app.logger.info(f"Page {page_no}: {len(return_list)} returns fetched in {request_duration:.3f}s - NO DELAY")
+        
+        if not return_list:
+            app.logger.info(f"No more returns found at page {page_no}")
+            break
+            
+        all_returns.extend(return_list)
+        page_no += 1
+        
+        # NO TIME.SLEEP() - Testing without delays!
+        
+    total_duration = time.time() - test_start
+    
+    return {
+        "total_returns": len(all_returns),
+        "pages_fetched": page_no - 1,
+        "total_duration": round(total_duration, 3),
+        "average_per_request": round(total_duration / (page_no - 1), 3) if page_no > 1 else 0,
+        "returns_per_second": round(len(all_returns) / total_duration, 3) if total_duration > 0 else 0,
+        "status": "completed"
+    }
+
+def test_unlimited_failed_delivery(shop_id, access_token):
+    """Test failed delivery API tanpa batasan speed dan dengan cursor pagination."""
+    import time
+    
+    test_start = time.time()
+    all_failed_deliveries = []
+    request_count = 0
+    max_requests = 50  # Batasan untuk mencegah infinite loop
+    
+    app.logger.info(f"Starting unlimited failed delivery fetch - no delays, max page size")
+    
+    cursor = ''
+    
+    while request_count < max_requests:
+        start_time = time.time()
+        request_count += 1
+        
+        # Test maximum page size (API doc says 50 max, but let's test higher)
+        body = {
+            "page_size": 500,  # Test lebih dari dokumentasi
+            "cursor": cursor,
+            "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
+            "create_time_to": int(datetime.now().timestamp())
+        }
+        
+        response, error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=body)
+        
+        end_time = time.time()
+        request_duration = end_time - start_time
+        
+        if error:
+            app.logger.error(f"Error on request {request_count}: {error}")
+            break
+            
+        if not response or 'response' not in response:
+            app.logger.warning(f"No response data on request {request_count}")
+            break
+            
+        failed_delivery_list = response.get('response', {}).get('failed_delivery_list', [])
+        next_cursor = response.get('response', {}).get('next_cursor', '')
+        
+        app.logger.info(f"Request {request_count}: {len(failed_delivery_list)} failed deliveries in {request_duration:.3f}s - NO DELAY")
+        
+        if not failed_delivery_list:
+            app.logger.info(f"No more failed deliveries found at request {request_count}")
+            break
+            
+        all_failed_deliveries.extend(failed_delivery_list)
+        
+        if not next_cursor:
+            app.logger.info(f"No more cursor available - reached end")
+            break
+            
+        cursor = next_cursor
+        
+        # NO TIME.SLEEP() - Testing without delays!
+        
+    total_duration = time.time() - test_start
+    
+    return {
+        "total_failed_deliveries": len(all_failed_deliveries),
+        "requests_made": request_count,
+        "total_duration": round(total_duration, 3),
+        "average_per_request": round(total_duration / request_count, 3) if request_count > 0 else 0,
+        "failed_deliveries_per_second": round(len(all_failed_deliveries) / total_duration, 3) if total_duration > 0 else 0,
+        "status": "completed"
+    }
 
 # ==============================================================================
 # ENTRY POINT UNTUK MENJALANKAN APLIKASI
