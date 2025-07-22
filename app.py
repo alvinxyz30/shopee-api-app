@@ -1682,7 +1682,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     # Step 5: Fetch Failed Delivery data
     update_progress(85.0, 'Mengambil data Failed Delivery...')
     failed_deliveries = get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, 
-                                                      lambda msg: update_progress(86.0, msg))
+                                                      lambda msg: update_progress(86.0, msg), export_id)
 
     failed_delivery_map = {fd['order_sn']: fd for fd in failed_deliveries}
 
@@ -1710,7 +1710,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     
     app.logger.info(f"Export completed with {len(processed_data)} rows (Strict Dates & Expanded SKUs).")
 
-def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, progress_callback=None):
+def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, progress_callback=None, export_id=None):
     """Mengambil semua data failed delivery dari API logistics/get_failed_delivery_list dengan chunking tanggal."""
     app.logger.info(f"Fetching failed delivery data for shop {shop_id} from {date_from} to {date_to}")
     all_failed_deliveries = []
