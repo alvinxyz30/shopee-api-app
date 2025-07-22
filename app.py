@@ -2081,11 +2081,17 @@ def test_api_limits():
     import time
     from datetime import datetime, timedelta
     
-    shop_id = session.get('shop_id')
-    access_token = session.get('access_token')
+    # Try to get from session first, then from request args
+    shop_id = session.get('shop_id') or request.args.get('shop_id')
+    access_token = session.get('access_token') or request.args.get('access_token')
     
     if not shop_id or not access_token:
-        return {"error": "Shop ID dan access token diperlukan"}
+        return {
+            "error": "Shop ID dan access token diperlukan",
+            "note": "Login dulu atau pass parameters: ?shop_id=xxx&access_token=xxx",
+            "session_shop_id": session.get('shop_id'),
+            "session_has_token": bool(session.get('access_token'))
+        }
     
     results = {
         "test_start": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -2283,11 +2289,17 @@ def test_unlimited_fetch():
     import time
     from datetime import datetime, timedelta
     
-    shop_id = session.get('shop_id')
-    access_token = session.get('access_token')
+    # Try to get from session first, then from request args
+    shop_id = session.get('shop_id') or request.args.get('shop_id')
+    access_token = session.get('access_token') or request.args.get('access_token')
     
     if not shop_id or not access_token:
-        return {"error": "Shop ID dan access token diperlukan"}
+        return {
+            "error": "Shop ID dan access token diperlukan",
+            "note": "Login dulu atau pass parameters: ?shop_id=xxx&access_token=xxx",
+            "session_shop_id": session.get('shop_id'),
+            "session_has_token": bool(session.get('access_token'))
+        }
     
     results = {
         "test_start": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
