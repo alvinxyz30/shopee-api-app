@@ -1327,7 +1327,7 @@ def load_checkpoint(export_id):
         return export_progress_store[export_id].get('checkpoint', {})
     return {}
 
-def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progress_callback=None):
+def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progress_callback=None, export_id=None):
     """
     Efficiently fetches order details and tracking numbers for a list of order_sn
     using batch processing for order details.
@@ -1676,7 +1676,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         update_progress(progress, step)
 
     order_details_map, tracking_numbers_map = get_batch_order_and_tracking_details(
-        shop_id, access_token, order_sns_to_fetch, progress_callback_for_batch
+        shop_id, access_token, order_sns_to_fetch, progress_callback_for_batch, export_id
     )
 
     # Step 5: Fetch Failed Delivery data
