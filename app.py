@@ -54,8 +54,73 @@ def generate_signature(path, timestamp, access_token=None, shop_id=None):
     base_string = "".join(base_string_parts)
     return hmac.new(PARTNER_KEY.encode('utf-8'), base_string.encode('utf-8'), hashlib.sha256).hexdigest()
 
+def refresh_shopee_token(shop_id, refresh_token):
+    app.logger.info(f"Attempting to refresh token for shop_id: {shop_id}")
+    path_refresh = "/api/v2/auth/access_token/get"
+    body_refresh = {"refresh_token": refresh_token, "shop_id": int(shop_id), "partner_id": PARTNER_ID}
+    
+    timestamp = int(time.time())
+    sign = generate_signature(path_refresh, timestamp)
+    
+    params = {"partner_id": PARTNER_ID, "timestamp": timestamp, "sign": sign}
+    full_url = f"{BASE_URL}{path_refresh}"
+    headers = {'Content-Type': 'application/json'}
+
+    try:
+        response = requests.post(full_url, params=params, json=body_refresh, headers=headers, timeout=30)
+        response.raise_for_status()
+        response_data = response.json()
+        
+        if response_data.get("error"):
+            app.logger.error(f"Shopee API Token Refresh Error: {response_data.get('message', 'Unknown error')}")
+            return None, response_data.get('message', 'Unknown error')
+        
+        new_access_token = response_data.get('access_token')
+        new_refresh_token = response_data.get('refresh_token')
+        expire_in = response_data.get('expire_in')
+
+        if new_access_token and new_refresh_token and expire_in:
+            # Update session with new tokens
+            shops = session.get('shops', {})
+            if str(shop_id) in shops:
+                shops[str(shop_id)]['access_token'] = new_access_token
+                shops[str(shop_id)]['refresh_token'] = new_refresh_token
+                shops[str(shop_id)]['expire_in'] = int(time.time()) + expire_in
+                session['shops'] = shops
+                session.modified = True
+                app.logger.info(f"Successfully refreshed token for shop_id: {shop_id}")
+                return new_access_token, None
+            else:
+                app.logger.error(f"Shop {shop_id} not found in session during token refresh.")
+                return None, "Shop not found in session."
+        else:
+            app.logger.error(f"Incomplete token refresh response for shop_id {shop_id}: {response_data}")
+            return None, "Incomplete token refresh response."
+
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"Network error during token refresh for shop_id {shop_id}: {e}")
+        return None, f"Network error during token refresh: {e}"
+    except Exception as e:
+        app.logger.error(f"Unexpected error during token refresh for shop_id {shop_id}: {e}")
+        return None, f"Unexpected error during token refresh: {e}"
+
 def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=None, max_retries=3):
     """Fungsi generik untuk memanggil semua endpoint Shopee API v2 dengan rate limiting dan retry."""
+    
+    current_access_token = access_token
+    
+    # Check and refresh token if necessary
+    if shop_id and current_access_token:
+        shops = session.get('shops', {})
+        shop_data = shops.get(str(shop_id))
+        if shop_data and shop_data.get('expire_in') and shop_data['expire_in'] <= int(time.time()) + 60: # Refresh if expires in next 60 seconds
+            app.logger.info(f"Access token for shop {shop_id} is expiring soon or expired. Attempting refresh.")
+            new_token, refresh_error = refresh_shopee_token(shop_id, shop_data['refresh_token'])
+            if refresh_error:
+                app.logger.error(f"Failed to refresh token for shop {shop_id}: {refresh_error}")
+                return None, f"Failed to refresh token: {refresh_error}"
+            current_access_token = new_token
+            
     timestamp = int(time.time())
     
     if not all([PARTNER_ID, PARTNER_KEY not in ["", "GANTI_DENGAN_PARTNER_KEY_ANDA"]]):
@@ -63,11 +128,11 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
         app.logger.error(msg)
         return None, msg
 
-    sign = generate_signature(path, timestamp, access_token, shop_id)
+    sign = generate_signature(path, timestamp, current_access_token, shop_id)
     
     params = {"partner_id": PARTNER_ID, "timestamp": timestamp, "sign": sign}
-    if access_token:
-        params["access_token"] = access_token
+    if current_access_token:
+        params["access_token"] = current_access_token
     if shop_id:
         params["shop_id"] = shop_id
 
@@ -1419,7 +1484,7 @@ def format_return_data_for_excel(chunk_returns, order_details_map, tracking_numb
     
     return processed_items
 
-def format_combined_data_for_excel(combined_data, order_details_map, tracking_numbers_map, failed_delivery_map, cancelled_orders_map):
+def format_combined_data_for_excel(combined_data, order_details_map, tracking_numbers_map, failed_delivery_map):
     """
     Formats combined data (returns, failed deliveries, cancelled orders) into a list of dictionaries for Excel export.
     Creates a SEPARATE ROW for each item in a return/cancelled order.
@@ -1436,7 +1501,6 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
         "Tanggal Order",
         "Tanggal Retur Diajukan",
         "Tanggal Gagal Kirim",
-        "Tanggal Pembatalan",
         "Payment Method",
         "Status",
         "Alasan",
@@ -1452,7 +1516,6 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
         "Failed Delivery Reason",
         "Failed Delivery Tracking No",
         "Failed Delivery Status",
-        "Cancelled Order Status",
         "SKU Code",
         "Nama Produk",
         "Qty"
@@ -1527,37 +1590,7 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
             })
             processed_rows.append(row)
 
-        elif item_type == 'cancelled_order':
-            order_create_time = datetime.fromtimestamp(item_data.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('create_time') else None
-            order_update_time = datetime.fromtimestamp(item_data.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('update_time') else None
-
-            row.update({
-                "No Resi Pengiriman": item_data.get('tracking_number', ''),
-                "Tanggal Order": order_create_time,
-                "Tanggal Pembatalan": order_update_time, # Assuming update_time is cancellation time
-                "Status": item_data.get('order_status'),
-                "Cancelled Order Status": item_data.get('order_status'),
-            })
-
-            # Loop through each product in the cancelled order and create a row for it
-            items_data = item_data.get('item_list', [])
-            if not items_data:
-                processed_rows.append(row.copy())
-            else:
-                for product_item in items_data:
-                    product_row = row.copy()
-                    sku = product_item.get('variation_sku') or product_item.get('item_sku')
-                    name = product_item.get('item_name')
-                    qty = product_item.get('model_quantity_purchased')
-
-                    product_row.update({
-                        "SKU Code": sku,
-                        "Nama Produk": name,
-                        "Qty": qty
-                    })
-                    processed_rows.append(product_row)
-
-    return processed_rows
+        return processed_rows
 
 def process_returns_with_manual_filter_global(export_id, access_token):
     """
@@ -1651,15 +1684,12 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         shop_id, access_token, order_sns_to_fetch, progress_callback_for_batch
     )
 
-    # Step 5: Fetch Failed Delivery and Cancelled Orders data
-    update_progress(85.0, 'Mengambil data Failed Delivery dan Cancelled Orders...')
+    # Step 5: Fetch Failed Delivery data
+    update_progress(85.0, 'Mengambil data Failed Delivery...')
     failed_deliveries = get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, 
                                                       lambda msg: update_progress(86.0, msg))
-    cancelled_orders_detailed = get_cancelled_orders_data(shop_id, access_token, date_from, date_to, 
-                                                 lambda msg: update_progress(88.0, msg))
 
     failed_delivery_map = {fd['order_sn']: fd for fd in failed_deliveries}
-    cancelled_orders_map = {co['order_sn']: co for co in cancelled_orders_detailed}
 
     # Step 6: Combine all data types and format for Excel
     update_progress(90.0, 'Menggabungkan data dan menyusun untuk Excel...')
@@ -1671,16 +1701,12 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     for fd in failed_deliveries:
         fd['type'] = 'failed_delivery'
         combined_data_for_processing.append(fd)
-    for co_sn, co_data in cancelled_orders_detailed.items():
-        co_data['type'] = 'cancelled_order'
-        combined_data_for_processing.append(co_data)
 
     processed_data = format_combined_data_for_excel(
         combined_data_for_processing, 
         order_details_map, 
         tracking_numbers_map, 
-        failed_delivery_map, 
-        cancelled_orders_map
+        failed_delivery_map
     )
     
     export_data['data'] = processed_data
@@ -1732,81 +1758,7 @@ def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, pro
     app.logger.info(f"Finished fetching {len(all_failed_deliveries)} failed deliveries.")
     return all_failed_deliveries
 
-def get_cancelled_orders_data(shop_id, access_token, date_from, date_to, progress_callback=None):
-    """Mengambil semua data cancelled orders dari API order/get_order_list dan detail SKU dengan chunking tanggal."""
-    app.logger.info(f"Fetching cancelled orders for shop {shop_id} from {date_from} to {date_to}")
-    all_cancelled_orders = []
-    
-    # Use 14-day chunks for cancelled orders API
-    date_chunks = get_date_chunks(date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'), 14)
-    app.logger.info(f"Created {len(date_chunks)} date chunks for cancelled orders.")
 
-    for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
-        page_no = 1
-        page_size = 50 # Max page size for this API
-
-        while True:
-            if progress_callback:
-                progress_callback(f'Mengambil data cancelled orders chunk {chunk_index + 1}/{len(date_chunks)} (page: {page_no})...')
-
-            body = {
-                "page_no": page_no,
-                "page_size": page_size,
-                "order_status": "CANCELLED",
-                "time_range_field": "create_time",
-                "time_from": int(chunk_start.timestamp()),
-                "time_to": int(chunk_end.timestamp())
-            }
-            response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET',
-                                            shop_id=shop_id, access_token=access_token, body=body)
-
-            if error:
-                app.logger.error(f"Error fetching cancelled orders list for chunk {chunk_index + 1}: {error}")
-                continue # Changed from break to continue
-
-            order_list = response.get('response', {}).get('order_list', [])
-            if not order_list:
-                break
-
-            all_cancelled_orders.extend(order_list)
-            page_no += 1
-            time.sleep(0.5) # Respect rate limit
-
-    app.logger.info(f"Finished fetching {len(all_cancelled_orders)} cancelled orders.")
-
-    # Filter for orders with tracking_no and fetch details
-    cancelled_orders_with_tracking = [order for order in all_cancelled_orders if order.get('tracking_number')]
-    app.logger.info(f"Found {len(cancelled_orders_with_tracking)} cancelled orders with tracking numbers.")
-
-    detailed_cancelled_orders = {}
-    order_sns_to_fetch_detail = [order['order_sn'] for order in cancelled_orders_with_tracking]
-
-    if order_sns_to_fetch_detail:
-        # Use batch fetching for order details
-        order_chunk_size = 50
-        order_chunks = [order_sns_to_fetch_detail[i:i + order_chunk_size] for i in range(0, len(order_sns_to_fetch_detail), order_chunk_size)]
-
-        for i, chunk in enumerate(order_chunks):
-            if progress_callback:
-                progress_callback(f'Mengambil detail SKU untuk cancelled orders batch {i+1}/{len(order_chunks)}...')
-
-            params = {
-                "order_sn_list": ",".join(chunk),
-                "response_optional_fields": "item_list" # To get SKU details
-            }
-            response, error = call_shopee_api("/api/v2/order/get_order_detail", method='GET',
-                                            shop_id=shop_id, access_token=access_token, body=params)
-
-            if error:
-                app.logger.warning(f"Batch order detail error for cancelled orders chunk {i+1}: {error}")
-                continue
-
-            order_list_detail = response.get('response', {}).get('order_list', [])
-            for order_detail in order_list_detail:
-                detailed_cancelled_orders[order_detail['order_sn']] = order_detail
-            time.sleep(0.5)
-
-    return detailed_cancelled_orders
 
 def process_returns_with_date_filter_global(export_id, access_token):
     """Process returns data WITH date filter (original logic) - excludes RRBOC returns."""

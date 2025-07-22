@@ -1,1 +1,1 @@
-feat: Implement date chunking for failed deliveries and cancelled orders APIs
+fix: Adjust date chunking to 14 days and improve error handling for failed deliveries and cancelled orders APIs
