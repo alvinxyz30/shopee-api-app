@@ -1694,8 +1694,8 @@ def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, pro
     app.logger.info(f"Fetching failed delivery data for shop {shop_id} from {date_from} to {date_to}")
     all_failed_deliveries = []
     
-    # Use 15-day chunks for failed deliveries API
-    date_chunks = get_date_chunks(date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'), 15)
+    # Use 14-day chunks for failed deliveries API
+    date_chunks = get_date_chunks(date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'), 14)
     app.logger.info(f"Created {len(date_chunks)} date chunks for failed deliveries.")
 
     for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
@@ -1718,7 +1718,7 @@ def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, pro
             if error:
                 app.logger.error(f"Error fetching failed delivery list for chunk {chunk_index + 1}: {error}")
                 # Continue to next chunk even if one fails
-                break 
+                continue # Changed from break to continue
 
             failed_delivery_list = response.get('response', {}).get('failed_delivery_list', [])
             all_failed_deliveries.extend(failed_delivery_list)
@@ -1737,8 +1737,8 @@ def get_cancelled_orders_data(shop_id, access_token, date_from, date_to, progres
     app.logger.info(f"Fetching cancelled orders for shop {shop_id} from {date_from} to {date_to}")
     all_cancelled_orders = []
     
-    # Use 15-day chunks for cancelled orders API
-    date_chunks = get_date_chunks(date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'), 15)
+    # Use 14-day chunks for cancelled orders API
+    date_chunks = get_date_chunks(date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'), 14)
     app.logger.info(f"Created {len(date_chunks)} date chunks for cancelled orders.")
 
     for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
@@ -1762,7 +1762,7 @@ def get_cancelled_orders_data(shop_id, access_token, date_from, date_to, progres
 
             if error:
                 app.logger.error(f"Error fetching cancelled orders list for chunk {chunk_index + 1}: {error}")
-                break
+                continue # Changed from break to continue
 
             order_list = response.get('response', {}).get('order_list', [])
             if not order_list:

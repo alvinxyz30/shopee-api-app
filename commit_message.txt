@@ -1,1 +1,1 @@
-feat: Implement combined export for returns, failed deliveries, and cancelled orders.
+feat: Implement date chunking for failed deliveries and cancelled orders APIs
