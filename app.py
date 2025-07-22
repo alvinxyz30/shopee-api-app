@@ -1646,20 +1646,28 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     all_raw_returns = []
     page_no = 1
     
+    app.logger.info(f"🔍 DEBUG: Starting raw returns fetch for shop {shop_id}")
+    
     while True:
         update_progress(10, f'Mengambil halaman {page_no} (semua data retur)...')
         
         return_body = {"page_no": page_no, "page_size": 100}  # Optimized: max API limit
+        app.logger.info(f"🔍 DEBUG: Fetching page {page_no} with body: {return_body}")
+        
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
                                         shop_id=shop_id, access_token=access_token, body=return_body, export_id=export_id)
             
         if error:
+            app.logger.error(f"🔍 DEBUG: API Error on page {page_no}: {error}")
             export_data['error'] = f"Gagal mengambil daftar retur: {error}"
             export_data['status'] = 'error'
             return
                 
         return_list = response.get('response', {}).get('return', [])
+        app.logger.info(f"🔍 DEBUG: Page {page_no} returned {len(return_list)} items")
+        
         if not return_list:
+            app.logger.info(f"🔍 DEBUG: No more data, breaking at page {page_no}")
             break
                 
         all_raw_returns.extend(return_list)
@@ -1668,6 +1676,9 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     
     app.logger.info(f"Fetched {len(all_raw_returns)} total raw returns from API.")
     update_progress(60.0, f'Menyaring {len(all_raw_returns)} data berdasarkan tanggal...')
+    
+    # CRITICAL DEBUG: Check if we reach this point
+    app.logger.info(f"🔍 DEBUG CHECKPOINT: About to start date filtering with {len(all_raw_returns)} items")
 
     # Step 3: Manual date filtering with detailed debugging
     app.logger.info(f"=== DATE FILTERING DEBUG ===")
