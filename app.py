@@ -1690,74 +1690,87 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     app.logger.info(f"Export completed with {len(processed_data)} rows (Strict Dates & Expanded SKUs).")
 
 def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, progress_callback=None):
-    """Mengambil semua data failed delivery dari API logistics/get_failed_delivery_list."""
+    """Mengambil semua data failed delivery dari API logistics/get_failed_delivery_list dengan chunking tanggal."""
     app.logger.info(f"Fetching failed delivery data for shop {shop_id} from {date_from} to {date_to}")
     all_failed_deliveries = []
-    cursor = ''
-    page_size = 50 # Max page size for this API
+    
+    # Use 15-day chunks for failed deliveries API
+    date_chunks = get_date_chunks(date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'), 15)
+    app.logger.info(f"Created {len(date_chunks)} date chunks for failed deliveries.")
 
-    while True:
-        if progress_callback:
-            progress_callback(f'Mengambil data failed delivery (cursor: {cursor if cursor else "start"})...')
+    for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
+        cursor = ''
+        page_size = 50 # Max page size for this API
+        
+        while True:
+            if progress_callback:
+                progress_callback(f'Mengambil data failed delivery chunk {chunk_index + 1}/{len(date_chunks)} (cursor: {cursor if cursor else "start"})...')
 
-        body = {
-            "page_size": page_size,
-            "cursor": cursor,
-            "create_time_from": int(date_from.timestamp()),
-            "create_time_to": int(date_to.timestamp())
-        }
-        response, error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET',
-                                        shop_id=shop_id, access_token=access_token, body=body)
+            body = {
+                "page_size": page_size,
+                "cursor": cursor,
+                "create_time_from": int(chunk_start.timestamp()),
+                "create_time_to": int(chunk_end.timestamp())
+            }
+            response, error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET',
+                                            shop_id=shop_id, access_token=access_token, body=body)
 
-        if error:
-            app.logger.error(f"Error fetching failed delivery list: {error}")
-            break
+            if error:
+                app.logger.error(f"Error fetching failed delivery list for chunk {chunk_index + 1}: {error}")
+                # Continue to next chunk even if one fails
+                break 
 
-        failed_delivery_list = response.get('response', {}).get('failed_delivery_list', [])
-        all_failed_deliveries.extend(failed_delivery_list)
+            failed_delivery_list = response.get('response', {}).get('failed_delivery_list', [])
+            all_failed_deliveries.extend(failed_delivery_list)
 
-        next_cursor = response.get('response', {}).get('next_cursor', '')
-        if not next_cursor or len(failed_delivery_list) < page_size:
-            break
-        cursor = next_cursor
-        time.sleep(0.5) # Respect rate limit
+            next_cursor = response.get('response', {}).get('next_cursor', '')
+            if not next_cursor or len(failed_delivery_list) < page_size:
+                break
+            cursor = next_cursor
+            time.sleep(0.5) # Respect rate limit
 
     app.logger.info(f"Finished fetching {len(all_failed_deliveries)} failed deliveries.")
     return all_failed_deliveries
 
 def get_cancelled_orders_data(shop_id, access_token, date_from, date_to, progress_callback=None):
-    """Mengambil semua data cancelled orders dari API order/get_order_list dan detail SKU."""
+    """Mengambil semua data cancelled orders dari API order/get_order_list dan detail SKU dengan chunking tanggal."""
     app.logger.info(f"Fetching cancelled orders for shop {shop_id} from {date_from} to {date_to}")
     all_cancelled_orders = []
-    page_no = 1
-    page_size = 50 # Max page size for this API
+    
+    # Use 15-day chunks for cancelled orders API
+    date_chunks = get_date_chunks(date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'), 15)
+    app.logger.info(f"Created {len(date_chunks)} date chunks for cancelled orders.")
 
-    while True:
-        if progress_callback:
-            progress_callback(f'Mengambil data cancelled orders (page: {page_no})...')
+    for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
+        page_no = 1
+        page_size = 50 # Max page size for this API
 
-        body = {
-            "page_no": page_no,
-            "page_size": page_size,
-            "order_status": "CANCELLED",
-            "time_range_field": "create_time",
-            "time_from": int(date_from.timestamp()),
-            "time_to": int(date_to.timestamp())
-        }
-        response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET',
-                                        shop_id=shop_id, access_token=access_token, body=body)
+        while True:
+            if progress_callback:
+                progress_callback(f'Mengambil data cancelled orders chunk {chunk_index + 1}/{len(date_chunks)} (page: {page_no})...')
 
-        if error:
-            app.logger.error(f"Error fetching cancelled orders list: {error}")
-            break
+            body = {
+                "page_no": page_no,
+                "page_size": page_size,
+                "order_status": "CANCELLED",
+                "time_range_field": "create_time",
+                "time_from": int(chunk_start.timestamp()),
+                "time_to": int(chunk_end.timestamp())
+            }
+            response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET',
+                                            shop_id=shop_id, access_token=access_token, body=body)
 
-        order_list = response.get('response', {}).get('order_list', [])
-        if not order_list:
-            break
+            if error:
+                app.logger.error(f"Error fetching cancelled orders list for chunk {chunk_index + 1}: {error}")
+                break
 
-        all_cancelled_orders.extend(order_list)
-        page_no += 1
-        time.sleep(0.5) # Respect rate limit
+            order_list = response.get('response', {}).get('order_list', [])
+            if not order_list:
+                break
+
+            all_cancelled_orders.extend(order_list)
+            page_no += 1
+            time.sleep(0.5) # Respect rate limit
 
     app.logger.info(f"Finished fetching {len(all_cancelled_orders)} cancelled orders.")
 
