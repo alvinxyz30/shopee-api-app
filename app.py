@@ -2143,9 +2143,7 @@ def test_return_list_limits(shop_id, access_token):
         
         body = {
             "page_no": 1,
-            "page_size": page_size,
-            "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
-            "create_time_to": int(datetime.now().timestamp())
+            "page_size": page_size
         }
         
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
@@ -2176,9 +2174,7 @@ def test_return_list_limits(shop_id, access_token):
         
         body = {
             "page_no": 1,
-            "page_size": 50,
-            "create_time_from": int((datetime.now() - timedelta(days=7)).timestamp()),
-            "create_time_to": int(datetime.now().timestamp())
+            "page_size": 50
         }
         
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
@@ -2359,9 +2355,7 @@ def test_unlimited_return_list(shop_id, access_token):
         # Use maximum page size possible (testing up to 2000)
         body = {
             "page_no": page_no,
-            "page_size": 50,  # Realistic page size
-            "create_time_from": int((datetime.now() - timedelta(days=30)).timestamp()),
-            "create_time_to": int(datetime.now().timestamp())
+            "page_size": 50  # Realistic page size
         }
         
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
