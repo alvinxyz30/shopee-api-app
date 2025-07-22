@@ -2081,16 +2081,17 @@ def test_api_limits():
     import time
     from datetime import datetime, timedelta
     
-    # Try to get from session first, then from request args, then from global shops
+    # Try to get from session first, then from request args, then from session shops
     shop_id = session.get('shop_id') or request.args.get('shop_id')
     access_token = session.get('access_token') or request.args.get('access_token')
     
-    # If still no data, try to get from global shops dictionary
+    # If still no data, try to get from session shops dictionary
     if not shop_id or not access_token:
+        shops = session.get('shops', {})
         if shops:
             shop_id, shop_data = next(iter(shops.items()))
             access_token = shop_data['access_token']
-            app.logger.info(f"Using shop from global shops: {shop_id}")
+            app.logger.info(f"Using shop from session shops: {shop_id}")
         else:
             return {
                 "error": "Shop ID dan access token diperlukan",
@@ -2296,16 +2297,17 @@ def test_unlimited_fetch():
     import time
     from datetime import datetime, timedelta
     
-    # Try to get from session first, then from request args, then from global shops
+    # Try to get from session first, then from request args, then from session shops
     shop_id = session.get('shop_id') or request.args.get('shop_id')
     access_token = session.get('access_token') or request.args.get('access_token')
     
-    # If still no data, try to get from global shops dictionary
+    # If still no data, try to get from session shops dictionary
     if not shop_id or not access_token:
+        shops = session.get('shops', {})
         if shops:
             shop_id, shop_data = next(iter(shops.items()))
             access_token = shop_data['access_token']
-            app.logger.info(f"Using shop from global shops: {shop_id}")
+            app.logger.info(f"Using shop from session shops: {shop_id}")
         else:
             return {
                 "error": "Shop ID dan access token diperlukan",
@@ -2465,6 +2467,7 @@ def test_unlimited_failed_delivery(shop_id, access_token):
 @app.route('/debug_shops')
 def debug_shops():
     """Debug endpoint untuk melihat shops yang tersedia."""
+    shops = session.get('shops', {})
     return {
         "available_shops": list(shops.keys()) if shops else [],
         "shops_data": {k: {
