@@ -1,1 +1,1 @@
-fix: Pass export_id to get_batch_order_and_tracking_details to resolve 'name 'export_id' is not defined' error
+fix: Pass export_id to get_failed_delivery_list_data call

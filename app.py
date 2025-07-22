@@ -1682,7 +1682,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     # Step 5: Fetch Failed Delivery data
     update_progress(85.0, 'Mengambil data Failed Delivery...')
     failed_deliveries = get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, 
-                                                      lambda msg: update_progress(86.0, msg), export_id)
+                                                      lambda msg, current_export_id=export_id: update_progress(86.0, msg), export_id)
 
     failed_delivery_map = {fd['order_sn']: fd for fd in failed_deliveries}
 
