@@ -458,7 +458,7 @@ def test_date_filter_specific_shop():
         
         wide_filter_body = {
             "page_no": 1, 
-            "page_size": 50,
+            "page_size": 100,  # Optimized: max API limit
             "create_time_from": int(wide_start.timestamp()),
             "create_time_to": int(wide_end.timestamp())
         }
@@ -544,7 +544,7 @@ def test_date_filter_specific_shop():
     try:
         no_filter_body = {
             "page_no": 1, 
-            "page_size": 50
+            "page_size": 100  # Optimized: max API limit
         }
         
         no_filter_response, no_filter_error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
@@ -795,9 +795,7 @@ def test_real_tracking_api():
         except Exception as e:
             results[order_sn] = {"error": str(e)}
         
-        # Rate limiting
-        import time
-        time.sleep(0.3)
+        # Removed time.sleep(0.3) - API research shows natural throttling
     
     return {
         "shop_id": shop_id,
@@ -1104,8 +1102,7 @@ def test_return_detail():
                         "exception": str(e)
                     }
                 
-                # Small delay between requests
-                time.sleep(0.3)
+                # Removed time.sleep(0.3) - API research shows natural throttling
             
             results[result_key] = format_results
         
@@ -1652,7 +1649,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     while True:
         update_progress(10, f'Mengambil halaman {page_no} (semua data retur)...')
         
-        return_body = {"page_no": page_no, "page_size": 50}
+        return_body = {"page_no": page_no, "page_size": 100}  # Optimized: max API limit
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
                                         shop_id=shop_id, access_token=access_token, body=return_body, export_id=export_id)
             
@@ -1667,7 +1664,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
                 
         all_raw_returns.extend(return_list)
         page_no += 1
-        time.sleep(0.3)
+        # Removed time.sleep(0.3) - API self-throttles at ~5s per request
     
     app.logger.info(f"Fetched {len(all_raw_returns)} total raw returns from API.")
     update_progress(60.0, f'Menyaring {len(all_raw_returns)} data berdasarkan tanggal...')
@@ -1826,7 +1823,7 @@ def process_returns_with_date_filter_global(export_id, access_token):
             # API call WITH date filter (original logic)
             return_body = {
                 "page_no": page_no, 
-                "page_size": 10,
+                "page_size": 20,  # Optimized: 2x increase for better throughput
                 "create_time_from": int(chunk_start.timestamp()),
                 "create_time_to": int(chunk_end.timestamp())
             }
@@ -1846,7 +1843,7 @@ def process_returns_with_date_filter_global(export_id, access_token):
             chunk_returns.extend(return_list)
             total_processed += len(return_list)
             
-            time.sleep(0.6)
+            # Removed time.sleep(0.6) - research shows API self-throttles
             page_no += 1
             
             if page_no > 40:
@@ -1962,8 +1959,7 @@ def process_orders_chunked_global(export_id, access_token):
             all_orders.extend(order_list)
             total_processed += len(order_list)
             
-            # Add delay to prevent rate limiting (100 calls per minute = 0.6s per call)
-            time.sleep(0.6)
+            # Removed artificial delay - API research shows natural throttling at ~5s
             page_no += 1
             
             # Safety limit per chunk
