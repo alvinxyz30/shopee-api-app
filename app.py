@@ -2081,17 +2081,24 @@ def test_api_limits():
     import time
     from datetime import datetime, timedelta
     
-    # Try to get from session first, then from request args
+    # Try to get from session first, then from request args, then from global shops
     shop_id = session.get('shop_id') or request.args.get('shop_id')
     access_token = session.get('access_token') or request.args.get('access_token')
     
+    # If still no data, try to get from global shops dictionary
     if not shop_id or not access_token:
-        return {
-            "error": "Shop ID dan access token diperlukan",
-            "note": "Login dulu atau pass parameters: ?shop_id=xxx&access_token=xxx",
-            "session_shop_id": session.get('shop_id'),
-            "session_has_token": bool(session.get('access_token'))
-        }
+        if shops:
+            shop_id, shop_data = next(iter(shops.items()))
+            access_token = shop_data['access_token']
+            app.logger.info(f"Using shop from global shops: {shop_id}")
+        else:
+            return {
+                "error": "Shop ID dan access token diperlukan",
+                "note": "Login dulu atau pass parameters: ?shop_id=xxx&access_token=xxx",
+                "session_shop_id": session.get('shop_id'),
+                "session_has_token": bool(session.get('access_token')),
+                "available_shops": list(shops.keys()) if shops else []
+            }
     
     results = {
         "test_start": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -2289,17 +2296,24 @@ def test_unlimited_fetch():
     import time
     from datetime import datetime, timedelta
     
-    # Try to get from session first, then from request args
+    # Try to get from session first, then from request args, then from global shops
     shop_id = session.get('shop_id') or request.args.get('shop_id')
     access_token = session.get('access_token') or request.args.get('access_token')
     
+    # If still no data, try to get from global shops dictionary
     if not shop_id or not access_token:
-        return {
-            "error": "Shop ID dan access token diperlukan",
-            "note": "Login dulu atau pass parameters: ?shop_id=xxx&access_token=xxx",
-            "session_shop_id": session.get('shop_id'),
-            "session_has_token": bool(session.get('access_token'))
-        }
+        if shops:
+            shop_id, shop_data = next(iter(shops.items()))
+            access_token = shop_data['access_token']
+            app.logger.info(f"Using shop from global shops: {shop_id}")
+        else:
+            return {
+                "error": "Shop ID dan access token diperlukan",
+                "note": "Login dulu atau pass parameters: ?shop_id=xxx&access_token=xxx",
+                "session_shop_id": session.get('shop_id'),
+                "session_has_token": bool(session.get('access_token')),
+                "available_shops": list(shops.keys()) if shops else []
+            }
     
     results = {
         "test_start": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -2446,6 +2460,21 @@ def test_unlimited_failed_delivery(shop_id, access_token):
         "average_per_request": round(total_duration / request_count, 3) if request_count > 0 else 0,
         "failed_deliveries_per_second": round(len(all_failed_deliveries) / total_duration, 3) if total_duration > 0 else 0,
         "status": "completed"
+    }
+
+@app.route('/debug_shops')
+def debug_shops():
+    """Debug endpoint untuk melihat shops yang tersedia."""
+    return {
+        "available_shops": list(shops.keys()) if shops else [],
+        "shops_data": {k: {
+            "shop_id": v.get("shop_id"),
+            "shop_name": v.get("shop_name"),
+            "has_access_token": bool(v.get("access_token")),
+            "token_expire": v.get("expire_in")
+        } for k, v in shops.items()} if shops else {},
+        "session_shop_id": session.get('shop_id'),
+        "session_has_token": bool(session.get('access_token'))
     }
 
 # ==============================================================================
