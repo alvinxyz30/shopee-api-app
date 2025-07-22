@@ -80,22 +80,11 @@ def refresh_shopee_token(shop_id, refresh_token):
         expire_in = response_data.get('expire_in')
 
         if new_access_token and new_refresh_token and expire_in:
-            # Update session with new tokens
-            shops = session.get('shops', {})
-            if str(shop_id) in shops:
-                shops[str(shop_id)]['access_token'] = new_access_token
-                shops[str(shop_id)]['refresh_token'] = new_refresh_token
-                shops[str(shop_id)]['expire_in'] = int(time.time()) + expire_in
-                session['shops'] = shops
-                session.modified = True
-                app.logger.info(f"Successfully refreshed token for shop_id: {shop_id}")
-                return new_access_token, None
-            else:
-                app.logger.error(f"Shop {shop_id} not found in session during token refresh.")
-                return None, "Shop not found in session."
+            app.logger.info(f"Successfully refreshed token for shop_id: {shop_id}")
+            return new_access_token, new_refresh_token, expire_in, None
         else:
             app.logger.error(f"Incomplete token refresh response for shop_id {shop_id}: {response_data}")
-            return None, "Incomplete token refresh response."
+            return None, None, None, "Incomplete token refresh response."
 
     except requests.exceptions.RequestException as e:
         app.logger.error(f"Network error during token refresh for shop_id {shop_id}: {e}")
@@ -104,22 +93,26 @@ def refresh_shopee_token(shop_id, refresh_token):
         app.logger.error(f"Unexpected error during token refresh for shop_id {shop_id}: {e}")
         return None, f"Unexpected error during token refresh: {e}"
 
-def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=None, max_retries=3):
+def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=None, max_retries=3, export_id=None):
     """Fungsi generik untuk memanggil semua endpoint Shopee API v2 dengan rate limiting dan retry."""
     
     current_access_token = access_token
     
     # Check and refresh token if necessary
-    if shop_id and current_access_token:
-        shops = session.get('shops', {})
-        shop_data = shops.get(str(shop_id))
+    if shop_id and current_access_token and export_id and export_id in export_progress_store:
+        shop_data = export_progress_store[export_id]
         if shop_data and shop_data.get('expire_in') and shop_data['expire_in'] <= int(time.time()) + 60: # Refresh if expires in next 60 seconds
             app.logger.info(f"Access token for shop {shop_id} is expiring soon or expired. Attempting refresh.")
-            new_token, refresh_error = refresh_shopee_token(shop_id, shop_data['refresh_token'])
+            new_access_token, new_refresh_token, new_expire_in, refresh_error = refresh_shopee_token(shop_id, shop_data['refresh_token'])
             if refresh_error:
                 app.logger.error(f"Failed to refresh token for shop {shop_id}: {refresh_error}")
                 return None, f"Failed to refresh token: {refresh_error}"
-            current_access_token = new_token
+            current_access_token = new_access_token
+            # Update global store with new tokens
+            export_progress_store[export_id]['access_token'] = new_access_token
+            export_progress_store[export_id]['refresh_token'] = new_refresh_token
+            export_progress_store[export_id]['expire_in'] = int(time.time()) + new_expire_in
+            app.logger.info(f"Updated token in export_progress_store for shop {shop_id}")
             
     timestamp = int(time.time())
     
@@ -1363,7 +1356,8 @@ def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progr
             shop_id=shop_id, 
             access_token=access_token, 
             body=params,
-            max_retries=3
+            max_retries=3,
+            export_id=export_id
         )
         
         if error:
@@ -1396,7 +1390,8 @@ def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progr
                     shop_id=shop_id, 
                     access_token=access_token, 
                     body=tracking_params, 
-                    max_retries=1
+                    max_retries=1,
+                    export_id=export_id
                 )
                 if tracking_response and not tracking_error:
                     tracking_number = tracking_response.get('response', {}).get('tracking_number', '')
@@ -1640,7 +1635,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         
         return_body = {"page_no": page_no, "page_size": 50}
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
-                                        shop_id=shop_id, access_token=access_token, body=return_body)
+                                        shop_id=shop_id, access_token=access_token, body=return_body, export_id=export_id)
             
         if error:
             export_data['error'] = f"Gagal mengambil daftar retur: {error}"
@@ -1739,7 +1734,7 @@ def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, pro
                 "create_time_to": int(chunk_end.timestamp())
             }
             response, error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET',
-                                            shop_id=shop_id, access_token=access_token, body=body)
+                                            shop_id=shop_id, access_token=access_token, body=body, export_id=export_id)
 
             if error:
                 app.logger.error(f"Error fetching failed delivery list for chunk {chunk_index + 1}: {error}")
@@ -1929,7 +1924,7 @@ def process_orders_chunked_global(export_id, access_token):
             }
             
             response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
-                                            shop_id=shop_id, access_token=access_token, body=order_body)
+                                            shop_id=shop_id, access_token=access_token, body=order_body, export_id=export_id)
             
             if error:
                 app.logger.error(f"Orders API error: {error}")
