@@ -1669,13 +1669,34 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     app.logger.info(f"Fetched {len(all_raw_returns)} total raw returns from API.")
     update_progress(60.0, f'Menyaring {len(all_raw_returns)} data berdasarkan tanggal...')
 
-    # Step 3: Manual date filtering
-    filtered_returns = [
-        item for item in all_raw_returns 
-        if item.get('create_time') and date_from <= datetime.fromtimestamp(item['create_time']) <= date_to
-    ]
+    # Step 3: Manual date filtering with detailed debugging
+    app.logger.info(f"=== DATE FILTERING DEBUG ===")
+    app.logger.info(f"Target date range: {date_from} to {date_to}")
+    app.logger.info(f"Total raw returns to filter: {len(all_raw_returns)}")
     
-    app.logger.info(f"After date filtering: {len(filtered_returns)} returns match criteria.")
+    filtered_returns = []
+    sample_dates = []
+    
+    for i, item in enumerate(all_raw_returns):
+        if item.get('create_time'):
+            item_date = datetime.fromtimestamp(item['create_time'])
+            in_range = date_from <= item_date <= date_to
+            
+            # Collect sample dates for debugging
+            if i < 5:  # First 5 items
+                sample_dates.append(f"Item {i+1}: {item_date} (in_range: {in_range})")
+            
+            if in_range:
+                filtered_returns.append(item)
+        else:
+            if i < 5:
+                sample_dates.append(f"Item {i+1}: NO create_time field")
+    
+    # Log sample dates for debugging
+    for sample in sample_dates:
+        app.logger.info(f"Sample: {sample}")
+    
+    app.logger.info(f"After date filtering: {len(filtered_returns)} returns match criteria (from {len(all_raw_returns)} total)")
     
     if not filtered_returns:
         update_progress(100.0, 'Selesai! Tidak ada data retur dalam rentang tanggal yang dipilih.')
