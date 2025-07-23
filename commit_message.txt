@@ -1,1 +1,1 @@
-feat: Remove all time.sleep() calls to rely on Shopee API's internal rate limiting
+feat: Integrate failed deliveries into returns report
