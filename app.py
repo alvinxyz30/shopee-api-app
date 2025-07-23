@@ -1326,8 +1326,10 @@ def get_date_chunks(start_date_str, end_date_str, chunk_days=3):
     
     chunks = []
     current = start_date
-    while current < end_date:
-        chunk_end = min(current + timedelta(days=chunk_days), end_date)
+    while current <= end_date:
+        # Ensure the chunk_end is within the allowed chunk_days limit
+        # If chunk_days is 15, this means a range of 15 days (e.g., day 1 to day 15 inclusive)
+        chunk_end = min(current + timedelta(days=chunk_days - 1), end_date)
         chunks.append((current, chunk_end))
         current = chunk_end + timedelta(days=1)  # Next chunk starts next day
     
@@ -1690,31 +1692,38 @@ def process_combined_data_global(export_id, access_token):
     # Step 3: Fetch Cancelled Orders (WITH DATE FILTERING AT API LEVEL)
     update_progress(15.0, 'Mengambil data pesanan dibatalkan dari API...')
     all_raw_cancelled_orders = []
-    page_no = 1
-    cursor = ""
-    while True:
-        update_progress(15 + (page_no * 0.1), f'Mengambil halaman {page_no} (pesanan dibatalkan)...')
-        order_body = {
-            "page_size": 100, # Max page size
-            "time_range_field": "create_time",
-            "time_from": int(date_from.timestamp()),
-            "time_to": int(date_to.timestamp()),
-            "order_status": "CANCELLED",
-            "cursor": cursor
-        }
-        response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
-                                        shop_id=shop_id, access_token=access_token, body=order_body, export_id=export_id)
-        if error:
-            export_data['error'] = f"Gagal mengambil daftar pesanan dibatalkan: {error}"
-            export_data['status'] = 'error'
-            return
-        order_list = response.get('response', {}).get('order_list', [])
-        if not order_list: break
-        all_raw_cancelled_orders.extend(order_list)
-        cursor = response.get('response', {}).get('next_cursor', '')
-        if not cursor: break
-        page_no += 1
-        if page_no > 200: break # Safety break
+    
+    # Break down date range into 15-day chunks for API calls
+    order_date_chunks = get_date_chunks(export_data['date_from'], export_data['date_to'], 15)
+    app.logger.info(f"Created {len(order_date_chunks)} date chunks for cancelled orders.")
+
+    for chunk_index, (chunk_start, chunk_end) in enumerate(order_date_chunks):
+        app.logger.info(f"Processing cancelled orders chunk {chunk_index + 1}/{len(order_date_chunks)}: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}")
+        page_no = 1
+        cursor = ""
+        while True:
+            update_progress(15 + (chunk_index * 5) + (page_no * 0.1), f'Mengambil halaman {page_no} (pesanan dibatalkan chunk {chunk_index + 1})...')
+            order_body = {
+                "page_size": 100, # Max page size
+                "time_range_field": "create_time",
+                "time_from": int(chunk_start.timestamp()),
+                "time_to": int(chunk_end.timestamp()),
+                "order_status": "CANCELLED",
+                "cursor": cursor
+            }
+            response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
+                                            shop_id=shop_id, access_token=access_token, body=order_body, export_id=export_id)
+            if error:
+                export_data['error'] = f"Gagal mengambil daftar pesanan dibatalkan: {error}"
+                export_data['status'] = 'error'
+                return
+            order_list = response.get('response', {}).get('order_list', [])
+            if not order_list: break
+            all_raw_cancelled_orders.extend(order_list)
+            cursor = response.get('response', {}).get('next_cursor', '')
+            if not cursor: break
+            page_no += 1
+            if page_no > 200: break # Safety break
     update_progress(20.0, f'Selesai mengambil {len(all_raw_cancelled_orders)} pesanan dibatalkan.')
     for item in all_raw_cancelled_orders:
         item['type'] = 'cancelled_order'
