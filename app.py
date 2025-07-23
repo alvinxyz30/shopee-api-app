@@ -1399,6 +1399,27 @@ def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progr
 
         # First, check if tracking is available in the already-fetched order detail
         order_detail = order_details_map.get(order_sn, {})
+        tracking_number = order_detail.get('tracking_number') # Some orders have it directly
+        if not tracking_number:
+            # If not, call the specific logistics API
+            try:
+                tracking_params = {"order_sn": order_sn}
+                tracking_response, tracking_error = call_shopee_api(
+                    "/api/v2/logistics/get_tracking_number", 
+                    method='GET', 
+                    shop_id=shop_id, 
+                    access_token=access_token, 
+                    body=tracking_params, 
+                    max_retries=1,
+                    export_id=export_id
+                )
+                if tracking_response and not tracking_error:
+                    tracking_number = tracking_response.get('response', {}).get('tracking_number', '')
+                else:
+                    app.logger.warning(f"Could not get tracking number for {order_sn}: {tracking_error}")
+            except Exception as e:
+                app.logger.error(f"Exception getting tracking number for {order_sn}: {e}")
+
         tracking_numbers_map[order_sn] = tracking_number or "" # Ensure it's a string
                     
 
