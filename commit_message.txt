@@ -1,1 +1,1 @@
-fix: Correctly pass export_id to lambda in get_failed_delivery_list_data call
+feat: Remove all time.sleep() calls to rely on Shopee API's internal rate limiting
