@@ -1,3 +1,0 @@
-fix: Correctly handle date range for cancelled and failed delivery orders
-
-Refactored `process_combined_data_global` to correctly fetch cancelled orders and identify failed deliveries by breaking down the date range into 15-day chunks, as per Shopee API limitations. Removed the erroneous `fetch_all_failed_deliveries` function.
