@@ -1687,29 +1687,13 @@ def process_combined_data_global(export_id, access_token):
         combined_raw_data.append(item)
         if 'order_sn' in item: all_order_sns_for_detail_fetch.add(item['order_sn'])
 
-    # Step 3: Fetch all raw failed deliveries (NO DATE FILTERING AT API LEVEL)
-    update_progress(15.0, 'Mengambil SEMUA data gagal kirim dari API...')
-    try:
-        all_raw_failed_deliveries = fetch_all_failed_deliveries(shop_id, access_token, export_id, update_progress)
-    except Exception as e:
-        export_data['error'] = str(e)
-        export_data['status'] = 'error'
-        update_progress(100, f"Error: {e}")
-        return
-    update_progress(20.0, f'Selesai mengambil {len(all_raw_failed_deliveries)} data gagal kirim.')
-    for item in all_raw_failed_deliveries:
-        item['type'] = 'failed_delivery'
-        item['create_time'] = item.get('rts_time') # Use RTS time for filtering
-        combined_raw_data.append(item)
-        if 'order_sn' in item: all_order_sns_for_detail_fetch.add(item['order_sn'])
-
-    # Step 4: Fetch Cancelled Orders (WITH DATE FILTERING AT API LEVEL)
-    update_progress(25.0, 'Mengambil data pesanan dibatalkan dari API...')
+    # Step 3: Fetch Cancelled Orders (WITH DATE FILTERING AT API LEVEL)
+    update_progress(15.0, 'Mengambil data pesanan dibatalkan dari API...')
     all_raw_cancelled_orders = []
     page_no = 1
     cursor = ""
     while True:
-        update_progress(25 + (page_no * 0.1), f'Mengambil halaman {page_no} (pesanan dibatalkan)...')
+        update_progress(15 + (page_no * 0.1), f'Mengambil halaman {page_no} (pesanan dibatalkan)...')
         order_body = {
             "page_size": 100, # Max page size
             "time_range_field": "create_time",
@@ -1731,15 +1715,15 @@ def process_combined_data_global(export_id, access_token):
         if not cursor: break
         page_no += 1
         if page_no > 200: break # Safety break
-    update_progress(30.0, f'Selesai mengambil {len(all_raw_cancelled_orders)} pesanan dibatalkan.')
+    update_progress(20.0, f'Selesai mengambil {len(all_raw_cancelled_orders)} pesanan dibatalkan.')
     for item in all_raw_cancelled_orders:
         item['type'] = 'cancelled_order'
         item['create_time'] = item.get('create_time') # Use create time for filtering
         combined_raw_data.append(item)
         if 'order_sn' in item: all_order_sns_for_detail_fetch.add(item['order_sn'])
 
-    # Step 5: Manual date filtering for returns and failed deliveries
-    update_progress(35.0, f'Menyaring {len(combined_raw_data)} data berdasarkan tanggal...')
+    # Step 4: Manual date filtering for returns and failed deliveries
+    update_progress(25.0, f'Menyaring {len(combined_raw_data)} data berdasarkan tanggal...')
     filtered_data = []
     for item in combined_raw_data:
         # Cancelled orders are already filtered by API
@@ -1757,18 +1741,18 @@ def process_combined_data_global(export_id, access_token):
         export_data['data'] = []
         return
 
-    # Step 6: BATCH fetch all required details for all order_sns
-    update_progress(40.0, f'Mempersiapkan pengambilan detail untuk {len(all_order_sns_for_detail_fetch)} order SNs...')
+    # Step 5: BATCH fetch all required details for all order_sns
+    update_progress(30.0, f'Mempersiapkan pengambilan detail untuk {len(all_order_sns_for_detail_fetch)} order SNs...')
     order_details_map, tracking_numbers_map = get_batch_order_and_tracking_details(
         shop_id, access_token, list(all_order_sns_for_detail_fetch), 
-        lambda p, s: update_progress(40 + (p/100*40), s), # Scale batch progress to 40-80% range
+        lambda p, s: update_progress(30 + (p/100*40), s), # Scale batch progress to 30-70% range
         export_id
     )
 
-    # Step 7: Identify Failed Deliveries from Cancelled Orders (if not already identified)
+    # Step 6: Identify Failed Deliveries from Cancelled Orders (if not already identified)
     # This step is crucial if the API doesn't explicitly mark failed deliveries.
     # We will iterate through the cancelled orders and check their cancellation_reason.
-    update_progress(80.0, 'Mengidentifikasi pesanan gagal kirim dari pesanan dibatalkan...')
+    update_progress(70.0, 'Mengidentifikasi pesanan gagal kirim dari pesanan dibatalkan...')
     final_processed_data = []
     for item in filtered_data:
         if item['type'] == 'cancelled_order':
@@ -1801,7 +1785,7 @@ def process_combined_data_global(export_id, access_token):
             
         final_processed_data.append(item)
 
-    # Step 8: Format for Excel
+    # Step 7: Format for Excel
     update_progress(95.0, 'Menggabungkan data dan menyusun untuk Excel...')
     processed_data = format_combined_data_for_excel(
         final_processed_data, 
