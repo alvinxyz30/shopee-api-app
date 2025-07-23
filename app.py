@@ -102,7 +102,7 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
     # Check and refresh token if necessary
     if shop_id and current_access_token and export_id and export_id in export_progress_store:
         shop_data = export_progress_store[export_id]
-        if shop_data and shop_data.get('expire_in') and shop_data['expire_in'] <= int(time.time()) + 60: # Refresh if expires in next 60 seconds
+        if shop_data and shop_data.get('expire_in') and shop_data['expire_in'] <= int(time.time()) + 300: # Refresh if expires in next 5 minutes or already expired
             app.logger.info(f"Access token for shop {shop_id} is expiring soon or expired. Attempting refresh.")
             new_access_token, new_refresh_token, new_expire_in, refresh_error = refresh_shopee_token(shop_id, shop_data['refresh_token'])
             if refresh_error:
@@ -1196,6 +1196,10 @@ def export_progress():
         flash("Tidak ada proses ekspor yang sedang berjalan.", 'warning')
         return redirect(url_for('dashboard'))
     
+    # Ensure 'tracking_number' is defined for the template, if it's expected
+    if export_data and 'tracking_number' not in export_data:
+        export_data['tracking_number'] = ''
+
     print("Rendering progress.html template")
     return render_template('progress.html', export_data=export_data)
 
