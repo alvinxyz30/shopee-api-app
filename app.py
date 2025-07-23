@@ -152,7 +152,7 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
             if response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', 2 ** attempt))
                 app.logger.warning(f"Rate limit exceeded. Retrying after {retry_after} seconds. Attempt {attempt + 1}/{max_retries}")
-                time.sleep(retry_after)
+                
                 continue
             
             response.raise_for_status()
@@ -185,7 +185,7 @@ def call_shopee_api(path, method='POST', shop_id=None, access_token=None, body=N
                 # Exponential backoff: 1s, 2s, 4s
                 backoff_time = 2 ** attempt
                 app.logger.warning(f"Request failed, retrying in {backoff_time} seconds. Attempt {attempt + 1}/{max_retries}")
-                time.sleep(backoff_time)
+                
                 continue
         except Exception as e:
             error_msg = f"Terjadi kesalahan tak terduga: {e}"
@@ -980,7 +980,7 @@ def test_order_detail_api():
         
         # Delay to avoid rate limiting
         import time
-        time.sleep(0.2)
+
     
     # Overall summary
     total_orders = len(analysis_results)
@@ -1384,7 +1384,7 @@ def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progr
         for order_detail in order_list:
             order_details_map[order_detail['order_sn']] = order_detail
         
-        time.sleep(0.5) # Respect rate limits between batch calls
+        
 
     # === Fetch tracking numbers (one by one, as there's no batch endpoint) ===
     for i, order_sn in enumerate(unique_order_sns):
@@ -1417,7 +1417,7 @@ def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progr
                 app.logger.error(f"Exception getting tracking number for {order_sn}: {e}")
 
         tracking_numbers_map[order_sn] = tracking_number or "" # Ensure it's a string
-        time.sleep(0.2) # Small delay to be safe with rate limits
+                    
 
     app.logger.info(f"Finished batch fetch. Got details for {len(order_details_map)} orders and {len(tracking_numbers_map)} tracking numbers.")
     return order_details_map, tracking_numbers_map
@@ -1495,7 +1495,7 @@ def format_return_data_for_excel(chunk_returns, order_details_map, tracking_numb
     
     return processed_items
 
-def format_combined_data_for_excel(combined_data, order_details_map, tracking_numbers_map, failed_delivery_map):
+def format_combined_data_for_excel(combined_data, order_details_map, tracking_numbers_map):
     """
     Formats combined data (returns, failed deliveries, cancelled orders) into a list of dictionaries for Excel export.
     Creates a SEPARATE ROW for each item in a return/cancelled order.
@@ -1524,9 +1524,6 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
         "Tanggal Jatuh Tempo",
         "Negotiation Status",
         "Needs Logistics",
-        "Failed Delivery Reason",
-        "Failed Delivery Tracking No",
-        "Failed Delivery Status",
         "SKU Code",
         "Nama Produk",
         "Qty"
@@ -1591,17 +1588,7 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
                     })
                     processed_rows.append(product_row)
 
-        elif item_type == 'failed_delivery':
-            row.update({
-                "No Resi Pengiriman": item_data.get('tracking_no', ''),
-                "Tanggal Gagal Kirim": datetime.fromtimestamp(item_data.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('create_time') else None,
-                "Failed Delivery Reason": item_data.get('fail_reason', ''),
-                "Failed Delivery Tracking No": item_data.get('tracking_no', ''),
-                "Failed Delivery Status": item_data.get('logistics_status', '')
-            })
-            processed_rows.append(row)
-
-        return processed_rows
+    return processed_rows
 
 def process_returns_with_manual_filter_global(export_id, access_token):
     """
@@ -1727,29 +1714,18 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         shop_id, access_token, order_sns_to_fetch, progress_callback_for_batch, export_id
     )
 
-    # Step 5: Fetch Failed Delivery data
-    update_progress(85.0, 'Mengambil data Failed Delivery...')
-    failed_deliveries = get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, 
-                                                      lambda msg, current_export_id=export_id: update_progress(86.0, msg), export_id)
-
-    failed_delivery_map = {fd['order_sn']: fd for fd in failed_deliveries}
-
-    # Step 6: Combine all data types and format for Excel
+    # Step 5: Combine all data types and format for Excel
     update_progress(90.0, 'Menggabungkan data dan menyusun untuk Excel...')
     
     combined_data_for_processing = []
     for ret in filtered_returns:
         ret['type'] = 'return'
         combined_data_for_processing.append(ret)
-    for fd in failed_deliveries:
-        fd['type'] = 'failed_delivery'
-        combined_data_for_processing.append(fd)
 
     processed_data = format_combined_data_for_excel(
         combined_data_for_processing, 
         order_details_map, 
-        tracking_numbers_map, 
-        failed_delivery_map
+        tracking_numbers_map
     )
     
     export_data['data'] = processed_data
@@ -1758,94 +1734,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     
     app.logger.info(f"Export completed with {len(processed_data)} rows (Strict Dates & Expanded SKUs).")
 
-def get_failed_delivery_list_data(shop_id, access_token, date_from, date_to, progress_callback=None, export_id=None):
-    """Mengambil semua data failed delivery dari API logistics/get_failed_delivery_list dengan chunking tanggal."""
-    app.logger.info(f"Fetching failed delivery data for shop {shop_id} from {date_from} to {date_to}")
-    
-    # DEBUG: Detailed API testing and error analysis
-    app.logger.info("=== DEBUGGING FAILED DELIVERY API ===")
-    try:
-        # Test with minimal parameters first
-        test_body = {
-            "page_size": 1, 
-            "cursor": "", 
-            "create_time_from": int(date_from.timestamp()), 
-            "create_time_to": int(date_to.timestamp())
-        }
-        app.logger.info(f"Testing failed delivery API with params: {test_body}")
-        test_response, test_error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET',
-                                                   shop_id=shop_id, access_token=access_token, body=test_body, max_retries=1)
-        
-        app.logger.info(f"API Test Result - Error: {test_error}")
-        app.logger.info(f"API Test Result - Response: {test_response}")
-        
-        if test_error:
-            if "404" in str(test_error):
-                app.logger.error("❌ FAILED DELIVERY API: 404 Not Found - Endpoint may be deprecated or moved")
-            elif "403" in str(test_error):
-                app.logger.error("❌ FAILED DELIVERY API: 403 Forbidden - Check app permissions/scope in Shopee Partner Dashboard")
-            elif "401" in str(test_error):
-                app.logger.error("❌ FAILED DELIVERY API: 401 Unauthorized - Token or signature issue")
-            elif "400" in str(test_error):
-                app.logger.error("❌ FAILED DELIVERY API: 400 Bad Request - Check parameter format")
-            else:
-                app.logger.error(f"❌ FAILED DELIVERY API: Other error - {test_error}")
-            
-            app.logger.warning("⚠️ Returning empty list to allow export to continue without failed delivery data")
-            return []
-        else:
-            app.logger.info("✅ Failed delivery API test successful - proceeding with full fetch")
-            
-    except Exception as e:
-        app.logger.error(f"❌ Failed delivery API test exception: {str(e)}")
-        app.logger.warning("⚠️ Returning empty list due to exception")
-        return []
-        
-    all_failed_deliveries = []
-    
-    # Use 14-day chunks for failed deliveries API
-    date_chunks = get_date_chunks(date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'), 14)
-    app.logger.info(f"Created {len(date_chunks)} date chunks for failed deliveries.")
 
-    for chunk_index, (chunk_start, chunk_end) in enumerate(date_chunks):
-        cursor = ''
-        page_size = 50 # Max page size for this API
-        
-        while True:
-            if progress_callback:
-                progress_callback(f'Mengambil data failed delivery chunk {chunk_index + 1}/{len(date_chunks)} (cursor: {cursor if cursor else "start"})...')
-
-            body = {
-                "page_size": page_size,
-                "cursor": cursor,
-                "create_time_from": int(chunk_start.timestamp()),
-                "create_time_to": int(chunk_end.timestamp())
-            }
-            # Try original endpoint first, then fallback to alternative
-            response, error = call_shopee_api("/api/v2/logistics/get_failed_delivery_list", method='GET',
-                                            shop_id=shop_id, access_token=access_token, body=body, export_id=export_id)
-
-            # If 404, skip this chunk (API endpoint not available)
-            if error and "404" in str(error):
-                app.logger.warning(f"Failed delivery API not found (404) - skipping chunk {chunk_index + 1}")
-                continue
-
-            if error:
-                app.logger.error(f"Error fetching failed delivery list for chunk {chunk_index + 1}: {error}")
-                # Continue to next chunk even if one fails
-                continue # Changed from break to continue
-
-            failed_delivery_list = response.get('response', {}).get('failed_delivery_list', [])
-            all_failed_deliveries.extend(failed_delivery_list)
-
-            next_cursor = response.get('response', {}).get('next_cursor', '')
-            if not next_cursor or len(failed_delivery_list) < page_size:
-                break
-            cursor = next_cursor
-            time.sleep(0.5) # Respect rate limit
-
-    app.logger.info(f"Finished fetching {len(all_failed_deliveries)} failed deliveries.")
-    return all_failed_deliveries
 
 
 
@@ -2237,7 +2126,7 @@ def test_return_list_limits(shop_id, access_token):
         app.logger.info(f"Page size {page_size}: Success={error is None}, Duration={request_duration:.3f}s, Items={len(response.get('response', {}).get('return', [])) if response else 0}")
         
         # Small delay to be respectful
-        time.sleep(0.1)
+
     
     # Test 2: Rate limit test - rapid requests
     app.logger.info("Testing rate limits with rapid requests")
@@ -2321,7 +2210,7 @@ def test_failed_delivery_limits(shop_id, access_token):
         app.logger.info(f"Failed delivery page size {page_size}: Success={error is None}, Duration={request_duration:.3f}s, Items={len(response.get('response', {}).get('failed_delivery_list', [])) if response else 0}")
         
         # Small delay to be respectful
-        time.sleep(0.1)
+
     
     # Test 2: Rate limit test - rapid requests
     app.logger.info("Testing failed delivery API rate limits")
