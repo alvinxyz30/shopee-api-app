@@ -1951,7 +1951,7 @@ def process_orders_chunked_global(export_id, access_token):
             # API call untuk orders dengan date filter
             order_body = {
                 "page_no": page_no,
-                "page_size": 20,  # Larger page size for orders
+                "page_size": 100,  # Increased page size for orders
                 "time_range_field": "create_time",
                 "time_from": int(chunk_start.timestamp()),
                 "time_to": int(chunk_end.timestamp())
