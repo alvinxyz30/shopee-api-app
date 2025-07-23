@@ -1630,49 +1630,7 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
 
     return processed_rows
 
-def fetch_all_failed_deliveries(shop_id, access_token, export_id, update_progress):
-    """Fetches all failed delivery records from the API."""
-    app.logger.info("Starting fetch for all failed deliveries.")
-    all_failed_deliveries = []
-    page_no = 1
-    while True:
-        progress_percentage = 30 + (page_no * 2)
-        update_progress(min(progress_percentage, 49), f'Mengambil halaman {page_no} (data gagal kirim)...')
-        
-        body = {"page_no": page_no, "page_size": 100}
-        response, error = call_shopee_api(
-            "/api/v2/logistics/get_failed_delivery_list",
-            method='GET',
-            shop_id=shop_id,
-            access_token=access_token,
-            body=body,
-            export_id=export_id
-        )
 
-        if error:
-            app.logger.error(f"API Error fetching failed deliveries on page {page_no}: {error}")
-            raise Exception(f"Gagal mengambil daftar gagal kirim: {error}")
-
-        response_data = response.get('response', {})
-        failed_delivery_list = response_data.get('failed_delivery_list', [])
-        
-        if not failed_delivery_list:
-            app.logger.info(f"No more failed deliveries, breaking at page {page_no}.")
-            break
-        
-        all_failed_deliveries.extend(failed_delivery_list)
-        
-        if not response_data.get('more', False):
-             app.logger.info(f"API indicates no more failed deliveries. Breaking at page {page_no}.")
-             break
-
-        page_no += 1
-        if page_no > 100:
-            app.logger.warning("Reached safety limit of 100 pages for failed deliveries.")
-            break
-    
-    app.logger.info(f"Fetched {len(all_failed_deliveries)} total raw failed deliveries.")
-    return all_failed_deliveries
 
 def process_combined_data_global(export_id, access_token):
     """
