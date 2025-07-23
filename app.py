@@ -1293,6 +1293,8 @@ def start_chunked_export():
                     process_orders_chunked_global(export_id, access_token)
                 elif current_export['data_type'] == 'products':
                     process_products_chunked_global(export_id, access_token)
+                elif current_export['data_type'] == 'combined_report':
+                    process_combined_data_global(export_id, access_token)
             except Exception as e:
                 app.logger.error(f"Background process error: {e}")
                 # Update global store with error
@@ -1497,8 +1499,8 @@ def format_return_data_for_excel(chunk_returns, order_details_map, tracking_numb
 
 def format_combined_data_for_excel(combined_data, order_details_map, tracking_numbers_map):
     """
-    Formats combined data (returns, failed deliveries) into a list of dictionaries for Excel export.
-    Creates a SEPARATE ROW for each item in a return or failed delivery.
+    Formats combined data (returns, failed deliveries, cancelled orders) into a list of dictionaries for Excel export.
+    Creates a SEPARATE ROW for each item in a return, failed delivery, or cancelled order.
     """
     processed_rows = []
 
@@ -1506,22 +1508,30 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
     all_columns = [
         "Tipe Data", "Nomor Pesanan", "Nomor Retur", "No Resi Retur", 
         "No Resi Pengiriman", "Tanggal Order", "Tanggal Retur Diajukan", 
-        "Tanggal Gagal Kirim", "Payment Method", "Status", "Alasan", 
+        "Tanggal Gagal Kirim", "Tanggal Dibatalkan", "Payment Method", "Status", "Alasan", 
         "Mata Uang", "Total Pengembalian Dana", "Alasan Teks dari Pembeli", 
         "Username Pembeli", "Email Pembeli", "Tanggal Update", "Tanggal Jatuh Tempo", 
-        "Negotiation Status", "Needs Logistics", "SKU Code", "Nama Produk", "Qty"
+        "Negotiation Status", "Needs Logistics", "SKU Code", "Nama Produk", "Qty",
+        "Harga Satuan", "Harga Diskon", "Kota Pembeli", "Provinsi Pembeli"
     ]
 
     for item_data in combined_data:
         item_type = item_data.get('type')
         order_sn = item_data.get('order_sn')
         
-        # Get common details
+        # Get common details from order_details_map
         order_detail = order_details_map.get(order_sn, {})
         tracking_number = tracking_numbers_map.get(order_sn, "")
+        
         order_create_time = datetime.fromtimestamp(order_detail.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if order_detail.get('create_time') else None
+        order_update_time = datetime.fromtimestamp(order_detail.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if order_detail.get('update_time') else None
+        
         is_cod = order_detail.get('cod', False)
         payment_method = "COD (Cash on Delivery)" if is_cod else order_detail.get('payment_method_name', 'Online Payment')
+        
+        buyer_username = order_detail.get('buyer_username')
+        buyer_city = order_detail.get('recipient_address', {}).get('city')
+        buyer_province = order_detail.get('recipient_address', {}).get('state')
 
         # Base info for all items in this record
         parent_info = {col: "" for col in all_columns}
@@ -1531,8 +1541,13 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
             "No Resi Pengiriman": tracking_number,
             "Tanggal Order": order_create_time,
             "Payment Method": payment_method,
-            "Username Pembeli": order_detail.get('buyer_username'),
+            "Username Pembeli": buyer_username,
+            "Kota Pembeli": buyer_city,
+            "Provinsi Pembeli": buyer_province,
+            "Tanggal Update": order_update_time # Default to order update time
         })
+
+        items_list_for_excel = []
 
         if item_type == 'return':
             return_create_time = datetime.fromtimestamp(item_data.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('create_time') else None
@@ -1548,26 +1563,14 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
                 "Total Pengembalian Dana": item_data.get('refund_amount'),
                 "Alasan Teks dari Pembeli": item_data.get('text_reason'),
                 "Email Pembeli": item_data.get('user', {}).get('email'),
-                "Tanggal Update": return_update_time,
+                "Tanggal Update": return_update_time, # Override with return update time
                 "Tanggal Jatuh Tempo": datetime.fromtimestamp(item_data.get('due_date')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('due_date') else None,
                 "Negotiation Status": item_data.get('negotiation_status'),
                 "Needs Logistics": "Ya" if item_data.get('needs_logistics') else "Tidak"
             })
-            items_list = item_data.get('item', [])
-            
-            if not items_list:
-                processed_rows.append(parent_info)
-            else:
-                for product_item in items_list:
-                    product_row = parent_info.copy()
-                    variation_sku = product_item.get('variation_sku', '')
-                    item_sku = product_item.get('item_sku', '')
-                    product_row.update({
-                        "SKU Code": variation_sku if variation_sku else item_sku,
-                        "Nama Produk": product_item.get('name', ''),
-                        "Qty": product_item.get('amount', 0)
-                    })
-                    processed_rows.append(product_row)
+            items_list_for_excel = item_data.get('item', [])
+            if not items_list_for_excel: # Handle returns with no item data
+                items_list_for_excel.append({'name': 'N/A (No item data in return)', 'amount': 0, 'variation_sku': '', 'item_sku': ''})
 
         elif item_type == 'failed_delivery':
             failed_delivery_time = datetime.fromtimestamp(item_data.get('rts_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('rts_time') else None
@@ -1575,21 +1578,55 @@ def format_combined_data_for_excel(combined_data, order_details_map, tracking_nu
             parent_info.update({
                 "Tanggal Gagal Kirim": failed_delivery_time,
                 "Status": "FAILED_DELIVERY",
-                "Alasan": item_data.get('failed_delivery_reason'),
+                "Alasan": item_data.get('failed_delivery_reason', item_data.get('cancel_reason', '')), # Use specific reason or general cancel reason
             })
+            items_list_for_excel = order_detail.get('item_list', [])
+            if not items_list_for_excel: # Handle failed deliveries with no item data
+                items_list_for_excel.append({'item_name': 'N/A (No item data in order)', 'model_quantity_purchased': 0, 'item_sku': ''})
+
+        elif item_type == 'cancelled_order':
+            cancelled_time = datetime.fromtimestamp(item_data.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('update_time') else None
             
-            items_list = order_detail.get('item_list', [])
-            if not items_list:
-                processed_rows.append(parent_info)
-            else:
-                for product_item in items_list:
-                    product_row = parent_info.copy()
-                    product_row.update({
-                        "SKU Code": product_item.get('item_sku', ''),
-                        "Nama Produk": product_item.get('item_name', ''),
-                        "Qty": product_item.get('model_quantity_purchased', 0)
-                    })
-                    processed_rows.append(product_row)
+            parent_info.update({
+                "Tanggal Dibatalkan": cancelled_time,
+                "Status": item_data.get('order_status'), # Should be CANCELLED
+                "Alasan": item_data.get('cancel_reason', ''),
+                "Tanggal Update": cancelled_time # Override with cancelled time
+            })
+            items_list_for_excel = order_detail.get('item_list', [])
+            if not items_list_for_excel: # Handle cancelled orders with no item data
+                items_list_for_excel.append({'item_name': 'N/A (No item data in order)', 'model_quantity_purchased': 0, 'item_sku': ''})
+
+        # Loop through each product and create a row for it
+        for product_item in items_list_for_excel:
+            product_row = parent_info.copy()
+            
+            sku_code = ""
+            product_name = ""
+            qty = 0
+            unit_price = ""
+            discounted_price = ""
+
+            if item_type == 'return':
+                sku_code = product_item.get('variation_sku') or product_item.get('item_sku', '')
+                product_name = product_item.get('name', '')
+                qty = product_item.get('amount', 0)
+                # Return items don't have price info directly in this structure
+            elif item_type in ['failed_delivery', 'cancelled_order']:
+                sku_code = product_item.get('item_sku', '')
+                product_name = product_item.get('item_name', '')
+                qty = product_item.get('model_quantity_purchased', 0)
+                unit_price = product_item.get('model_original_price', '')
+                discounted_price = product_item.get('model_discounted_price', '')
+            
+            product_row.update({
+                "SKU Code": sku_code,
+                "Nama Produk": product_name,
+                "Qty": qty,
+                "Harga Satuan": unit_price, # New column
+                "Harga Diskon": discounted_price # New column
+            })
+            processed_rows.append(product_row)
 
     return processed_rows
 
@@ -1637,11 +1674,11 @@ def fetch_all_failed_deliveries(shop_id, access_token, export_id, update_progres
     app.logger.info(f"Fetched {len(all_failed_deliveries)} total raw failed deliveries.")
     return all_failed_deliveries
 
-def process_returns_with_manual_filter_global(export_id, access_token):
+def process_combined_data_global(export_id, access_token):
     """
-    Get ALL returns and failed deliveries, filter manually, then use BATCH processing to get details.
+    Get ALL returns, failed deliveries, and cancelled orders, filter manually, then use BATCH processing to get details.
     """
-    app.logger.info("=== STARTING process_returns_with_manual_filter_global (v4 - Combined) ===")
+    app.logger.info("=== STARTING process_combined_data_global (v5 - Combined Report) ===")
     
     if export_id not in export_progress_store:
         return
@@ -1665,13 +1702,16 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         export_data['error'] = error_msg
         return
 
-    # Step 2: Fetch all raw data (Returns)
-    update_progress(5.0, 'Mengambil SEMUA data retur dari API...')
     shop_id = export_data['shop_id']
+    combined_raw_data = []
+    all_order_sns_for_detail_fetch = set()
+
+    # Step 2: Fetch all raw return data (NO DATE FILTERING AT API LEVEL)
+    update_progress(5.0, 'Mengambil SEMUA data retur dari API...')
     all_raw_returns = []
     page_no = 1
     while True:
-        update_progress(10 + page_no, f'Mengambil halaman {page_no} (semua data retur)...')
+        update_progress(5 + (page_no * 0.1), f'Mengambil halaman {page_no} (data retur)...')
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
                                         shop_id=shop_id, access_token=access_token, body={"page_no": page_no, "page_size": 100}, export_id=export_id)
         if error:
@@ -1683,9 +1723,14 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         all_raw_returns.extend(return_list)
         page_no += 1
         if page_no > 200: break # Safety break
-    update_progress(30.0, f'Selesai mengambil {len(all_raw_returns)} data retur.')
+    update_progress(10.0, f'Selesai mengambil {len(all_raw_returns)} data retur.')
+    for item in all_raw_returns:
+        item['type'] = 'return'
+        combined_raw_data.append(item)
+        if 'order_sn' in item: all_order_sns_for_detail_fetch.add(item['order_sn'])
 
-    # Step 3: Fetch all raw data (Failed Deliveries)
+    # Step 3: Fetch all raw failed deliveries (NO DATE FILTERING AT API LEVEL)
+    update_progress(15.0, 'Mengambil SEMUA data gagal kirim dari API...')
     try:
         all_raw_failed_deliveries = fetch_all_failed_deliveries(shop_id, access_token, export_id, update_progress)
     except Exception as e:
@@ -1693,21 +1738,56 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         export_data['status'] = 'error'
         update_progress(100, f"Error: {e}")
         return
-
-    # Step 4: Combine, add type, and filter
-    update_progress(50.0, f'Menyaring {len(all_raw_returns)} retur dan {len(all_raw_failed_deliveries)} gagal kirim...')
-    combined_raw_data = []
-    for item in all_raw_returns:
-        item['type'] = 'return'
-        combined_raw_data.append(item)
+    update_progress(20.0, f'Selesai mengambil {len(all_raw_failed_deliveries)} data gagal kirim.')
     for item in all_raw_failed_deliveries:
         item['type'] = 'failed_delivery'
-        item['create_time'] = item.get('rts_time')
+        item['create_time'] = item.get('rts_time') # Use RTS time for filtering
         combined_raw_data.append(item)
+        if 'order_sn' in item: all_order_sns_for_detail_fetch.add(item['order_sn'])
 
+    # Step 4: Fetch Cancelled Orders (WITH DATE FILTERING AT API LEVEL)
+    update_progress(25.0, 'Mengambil data pesanan dibatalkan dari API...')
+    all_raw_cancelled_orders = []
+    page_no = 1
+    cursor = ""
+    while True:
+        update_progress(25 + (page_no * 0.1), f'Mengambil halaman {page_no} (pesanan dibatalkan)...')
+        order_body = {
+            "page_size": 100, # Max page size
+            "time_range_field": "create_time",
+            "time_from": int(date_from.timestamp()),
+            "time_to": int(date_to.timestamp()),
+            "order_status": "CANCELLED",
+            "cursor": cursor
+        }
+        response, error = call_shopee_api("/api/v2/order/get_order_list", method='GET', 
+                                        shop_id=shop_id, access_token=access_token, body=order_body, export_id=export_id)
+        if error:
+            export_data['error'] = f"Gagal mengambil daftar pesanan dibatalkan: {error}"
+            export_data['status'] = 'error'
+            return
+        order_list = response.get('response', {}).get('order_list', [])
+        if not order_list: break
+        all_raw_cancelled_orders.extend(order_list)
+        cursor = response.get('response', {}).get('next_cursor', '')
+        if not cursor: break
+        page_no += 1
+        if page_no > 200: break # Safety break
+    update_progress(30.0, f'Selesai mengambil {len(all_raw_cancelled_orders)} pesanan dibatalkan.')
+    for item in all_raw_cancelled_orders:
+        item['type'] = 'cancelled_order'
+        item['create_time'] = item.get('create_time') # Use create time for filtering
+        combined_raw_data.append(item)
+        if 'order_sn' in item: all_order_sns_for_detail_fetch.add(item['order_sn'])
+
+    # Step 5: Manual date filtering for returns and failed deliveries
+    update_progress(35.0, f'Menyaring {len(combined_raw_data)} data berdasarkan tanggal...')
     filtered_data = []
     for item in combined_raw_data:
-        if item.get('create_time'):
+        # Cancelled orders are already filtered by API
+        if item['type'] == 'cancelled_order':
+            filtered_data.append(item)
+        elif item.get('create_time'):
             item_date = datetime.fromtimestamp(item['create_time'])
             if date_from <= item_date <= date_to:
                 filtered_data.append(item)
@@ -1719,20 +1799,54 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         export_data['data'] = []
         return
 
-    # Step 5: BATCH fetch all required details
-    update_progress(70.0, f'Mempersiapkan pengambilan detail untuk {len(filtered_data)} data...')
-    order_sns_to_fetch = list(set([d['order_sn'] for d in filtered_data if 'order_sn' in d]))
-    
+    # Step 6: BATCH fetch all required details for all order_sns
+    update_progress(40.0, f'Mempersiapkan pengambilan detail untuk {len(all_order_sns_for_detail_fetch)} order SNs...')
     order_details_map, tracking_numbers_map = get_batch_order_and_tracking_details(
-        shop_id, access_token, order_sns_to_fetch, 
-        lambda p, s: update_progress(70 + (p/100*20), s), # Scale batch progress to 70-90% range
+        shop_id, access_token, list(all_order_sns_for_detail_fetch), 
+        lambda p, s: update_progress(40 + (p/100*40), s), # Scale batch progress to 40-80% range
         export_id
     )
 
-    # Step 6: Format for Excel
+    # Step 7: Identify Failed Deliveries from Cancelled Orders (if not already identified)
+    # This step is crucial if the API doesn't explicitly mark failed deliveries.
+    # We will iterate through the cancelled orders and check their cancellation_reason.
+    update_progress(80.0, 'Mengidentifikasi pesanan gagal kirim dari pesanan dibatalkan...')
+    final_processed_data = []
+    for item in filtered_data:
+        if item['type'] == 'cancelled_order':
+            order_detail = order_details_map.get(item['order_sn'], {})
+            cancellation_reason = order_detail.get('cancel_reason', '')
+            
+            # Check for keywords indicating failed delivery
+            failed_delivery_keywords = [
+                "DISTRIBUTION_FAILED_CREATE_OUT_ORDER",
+                "DISTRIBUTION_UNASSIGNED_WAREHOUSE",
+                "failed delivery", # Common phrase
+                "gagal kirim", # Indonesian phrase
+                "pengiriman gagal", # Indonesian phrase
+                "alamat tidak ditemukan",
+                "penerima tidak dikenal",
+                "kurir tidak dapat menemukan lokasi"
+            ]
+            
+            is_failed_delivery = False
+            if cancellation_reason:
+                for keyword in failed_delivery_keywords:
+                    if keyword.lower() in cancellation_reason.lower():
+                        is_failed_delivery = True
+                        break
+            
+            if is_failed_delivery:
+                item['type'] = 'failed_delivery' # Re-tag as failed_delivery
+                item['failed_delivery_reason'] = cancellation_reason # Store the reason
+                item['create_time'] = order_detail.get('create_time') # Use order create time
+            
+        final_processed_data.append(item)
+
+    # Step 8: Format for Excel
     update_progress(95.0, 'Menggabungkan data dan menyusun untuk Excel...')
     processed_data = format_combined_data_for_excel(
-        filtered_data, 
+        final_processed_data, 
         order_details_map, 
         tracking_numbers_map
     )
@@ -1740,7 +1854,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     export_data['data'] = processed_data
     export_data['status'] = 'completed'
     update_progress(100.0, f'Selesai! {len(processed_data)} baris data berhasil diproses.')
-    app.logger.info(f"Export completed with {len(processed_data)} rows (Combined).")
+    app.logger.info(f"Export completed with {len(processed_data)} rows (Combined Report).")
 
 
 
