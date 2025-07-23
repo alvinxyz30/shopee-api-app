@@ -10,6 +10,7 @@ from flask import Flask, request, redirect, url_for, render_template, session, f
 from datetime import datetime, timedelta
 import pandas as pd
 import io
+import concurrent.futures
 
 # Global variable to store export progress (thread-safe alternative to session)
 export_progress_store = {}
@@ -1359,16 +1360,8 @@ def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progr
     
     app.logger.info(f"Starting batch fetch for {total_sns} unique order SNs.")
 
-    # === Batch fetch order details ===
-    order_chunk_size = 50  # Max 50 per call for get_order_detail
-    order_chunks = [unique_order_sns[i:i + order_chunk_size] for i in range(0, total_sns, order_chunk_size)]
-    
-    for i, chunk in enumerate(order_chunks):
-        if progress_callback:
-            # Progress for this sub-step (e.g., from 75% to 85%)
-            progress = 75 + (i / len(order_chunks)) * 10
-            progress_callback(progress, f'Mengambil detail pesanan batch {i+1}/{len(order_chunks)}...')
-            
+    # Helper function for parallel execution
+    def fetch_order_detail_chunk(chunk, shop_id, access_token, export_id):
         params = {"order_sn_list": ",".join(chunk), "response_optional_fields": "tracking_number"}
         response, error = call_shopee_api(
             "/api/v2/order/get_order_detail", 
@@ -1379,16 +1372,33 @@ def get_batch_order_and_tracking_details(shop_id, access_token, order_sns, progr
             max_retries=3,
             export_id=export_id
         )
-        
         if error:
-            app.logger.warning(f"Batch order detail error for chunk {i+1}: {error}")
-            continue
+            app.logger.warning(f"Batch order detail error for chunk: {error}")
+            return []
+        return response.get('response', {}).get('order_list', [])
+
+    # === Batch fetch order details with parallel execution ===
+    order_chunk_size = 50  # Max 50 per call for get_order_detail
+    order_chunks = [unique_order_sns[i:i + order_chunk_size] for i in range(0, total_sns, order_chunk_size)]
+    
+    # Use ThreadPoolExecutor for parallel API calls
+    # Limiting max_workers to a reasonable number to avoid overwhelming the API
+    max_parallel_calls = 5 
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel_calls) as executor:
+        future_to_chunk = {executor.submit(fetch_order_detail_chunk, chunk, shop_id, access_token, export_id): chunk for chunk in order_chunks}
         
-        order_list = response.get('response', {}).get('order_list', [])
-        for order_detail in order_list:
-            order_details_map[order_detail['order_sn']] = order_detail
-        
-        
+        for i, future in enumerate(concurrent.futures.as_completed(future_to_chunk)):
+            chunk = future_to_chunk[future]
+            if progress_callback:
+                progress = 75 + (i / len(order_chunks)) * 10
+                progress_callback(progress, f'Mengambil detail pesanan batch {i+1}/{len(order_chunks)} (parallel)...')
+            
+            try:
+                order_list = future.result()
+                for order_detail in order_list:
+                    order_details_map[order_detail['order_sn']] = order_detail
+            except Exception as exc:
+                app.logger.error(f'Chunk generated an exception: {exc}')
 
     # === Fetch tracking numbers (one by one, as there's no batch endpoint) ===
     for i, order_sn in enumerate(unique_order_sns):
