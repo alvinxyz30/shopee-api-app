@@ -1497,105 +1497,151 @@ def format_return_data_for_excel(chunk_returns, order_details_map, tracking_numb
 
 def format_combined_data_for_excel(combined_data, order_details_map, tracking_numbers_map):
     """
-    Formats combined data (returns, failed deliveries, cancelled orders) into a list of dictionaries for Excel export.
-    Creates a SEPARATE ROW for each item in a return/cancelled order.
+    Formats combined data (returns, failed deliveries) into a list of dictionaries for Excel export.
+    Creates a SEPARATE ROW for each item in a return or failed delivery.
     """
     processed_rows = []
 
     # Define all possible columns to ensure consistent order
     all_columns = [
-        "Tipe Data",
-        "Nomor Pesanan",
-        "Nomor Retur",
-        "No Resi Retur",
-        "No Resi Pengiriman",
-        "Tanggal Order",
-        "Tanggal Retur Diajukan",
-        "Tanggal Gagal Kirim",
-        "Payment Method",
-        "Status",
-        "Alasan",
-        "Mata Uang",
-        "Total Pengembalian Dana",
-        "Alasan Teks dari Pembeli",
-        "Username Pembeli",
-        "Email Pembeli",
-        "Tanggal Update",
-        "Tanggal Jatuh Tempo",
-        "Negotiation Status",
-        "Needs Logistics",
-        "SKU Code",
-        "Nama Produk",
-        "Qty"
+        "Tipe Data", "Nomor Pesanan", "Nomor Retur", "No Resi Retur", 
+        "No Resi Pengiriman", "Tanggal Order", "Tanggal Retur Diajukan", 
+        "Tanggal Gagal Kirim", "Payment Method", "Status", "Alasan", 
+        "Mata Uang", "Total Pengembalian Dana", "Alasan Teks dari Pembeli", 
+        "Username Pembeli", "Email Pembeli", "Tanggal Update", "Tanggal Jatuh Tempo", 
+        "Negotiation Status", "Needs Logistics", "SKU Code", "Nama Produk", "Qty"
     ]
 
     for item_data in combined_data:
-        row = {col: "" for col in all_columns} # Initialize row with empty strings
         item_type = item_data.get('type')
         order_sn = item_data.get('order_sn')
+        
+        # Get common details
+        order_detail = order_details_map.get(order_sn, {})
+        tracking_number = tracking_numbers_map.get(order_sn, "")
+        order_create_time = datetime.fromtimestamp(order_detail.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if order_detail.get('create_time') else None
+        is_cod = order_detail.get('cod', False)
+        payment_method = "COD (Cash on Delivery)" if is_cod else order_detail.get('payment_method_name', 'Online Payment')
 
-        # Common fields for all types
-        row["Tipe Data"] = item_type.replace('_', ' ').title() # e.g., "Return", "Failed Delivery", "Cancelled Order"
-        row["Nomor Pesanan"] = order_sn
+        # Base info for all items in this record
+        parent_info = {col: "" for col in all_columns}
+        parent_info.update({
+            "Tipe Data": item_type.replace('_', ' ').title(),
+            "Nomor Pesanan": order_sn,
+            "No Resi Pengiriman": tracking_number,
+            "Tanggal Order": order_create_time,
+            "Payment Method": payment_method,
+            "Username Pembeli": order_detail.get('buyer_username'),
+        })
 
         if item_type == 'return':
-            order_detail = order_details_map.get(order_sn, {})
-            tracking_number = tracking_numbers_map.get(order_sn, "")
-
             return_create_time = datetime.fromtimestamp(item_data.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('create_time') else None
-            order_create_time = datetime.fromtimestamp(order_detail.get('create_time')).strftime('%Y-%m-%d %H:%M:%S') if order_detail.get('create_time') else None
             return_update_time = datetime.fromtimestamp(item_data.get('update_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('update_time') else None
             
-            is_cod = order_detail.get('cod', False)
-            payment_method = "COD (Cash on Delivery)" if is_cod else "Online Payment"
-
-            row.update({
+            parent_info.update({
                 "Nomor Retur": item_data.get('return_sn'),
                 "No Resi Retur": item_data.get('tracking_number', ''),
-                "No Resi Pengiriman": tracking_number,
-                "Tanggal Order": order_create_time,
                 "Tanggal Retur Diajukan": return_create_time,
-                "Payment Method": payment_method,
                 "Status": item_data.get('status'),
                 "Alasan": item_data.get('reason'),
                 "Mata Uang": item_data.get('currency'),
                 "Total Pengembalian Dana": item_data.get('refund_amount'),
                 "Alasan Teks dari Pembeli": item_data.get('text_reason'),
-                "Username Pembeli": item_data.get('user', {}).get('username'),
                 "Email Pembeli": item_data.get('user', {}).get('email'),
                 "Tanggal Update": return_update_time,
                 "Tanggal Jatuh Tempo": datetime.fromtimestamp(item_data.get('due_date')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('due_date') else None,
                 "Negotiation Status": item_data.get('negotiation_status'),
                 "Needs Logistics": "Ya" if item_data.get('needs_logistics') else "Tidak"
             })
-
-            # Loop through each product in the return and create a row for it
-            items_data = item_data.get('item', [])
-            if not items_data:
-                # If a return has no items listed, create one row with empty product info
-                processed_rows.append(row.copy()) # Use copy to avoid modifying the original row
+            items_list = item_data.get('item', [])
+            
+            if not items_list:
+                processed_rows.append(parent_info)
             else:
-                for product_item in items_data:
-                    product_row = row.copy()
+                for product_item in items_list:
+                    product_row = parent_info.copy()
                     variation_sku = product_item.get('variation_sku', '')
                     item_sku = product_item.get('item_sku', '')
-                    sku_to_use = variation_sku if variation_sku else item_sku
-                    
                     product_row.update({
-                        "SKU Code": sku_to_use,
+                        "SKU Code": variation_sku if variation_sku else item_sku,
                         "Nama Produk": product_item.get('name', ''),
                         "Qty": product_item.get('amount', 0)
                     })
                     processed_rows.append(product_row)
 
+        elif item_type == 'failed_delivery':
+            failed_delivery_time = datetime.fromtimestamp(item_data.get('rts_time')).strftime('%Y-%m-%d %H:%M:%S') if item_data.get('rts_time') else None
+            
+            parent_info.update({
+                "Tanggal Gagal Kirim": failed_delivery_time,
+                "Status": "FAILED_DELIVERY",
+                "Alasan": item_data.get('failed_delivery_reason'),
+            })
+            
+            items_list = order_detail.get('item_list', [])
+            if not items_list:
+                processed_rows.append(parent_info)
+            else:
+                for product_item in items_list:
+                    product_row = parent_info.copy()
+                    product_row.update({
+                        "SKU Code": product_item.get('item_sku', ''),
+                        "Nama Produk": product_item.get('item_name', ''),
+                        "Qty": product_item.get('model_quantity_purchased', 0)
+                    })
+                    processed_rows.append(product_row)
+
     return processed_rows
+
+def fetch_all_failed_deliveries(shop_id, access_token, export_id, update_progress):
+    """Fetches all failed delivery records from the API."""
+    app.logger.info("Starting fetch for all failed deliveries.")
+    all_failed_deliveries = []
+    page_no = 1
+    while True:
+        progress_percentage = 30 + (page_no * 2)
+        update_progress(min(progress_percentage, 49), f'Mengambil halaman {page_no} (data gagal kirim)...')
+        
+        body = {"page_no": page_no, "page_size": 100}
+        response, error = call_shopee_api(
+            "/api/v2/logistics/get_failed_delivery_list",
+            method='GET',
+            shop_id=shop_id,
+            access_token=access_token,
+            body=body,
+            export_id=export_id
+        )
+
+        if error:
+            app.logger.error(f"API Error fetching failed deliveries on page {page_no}: {error}")
+            raise Exception(f"Gagal mengambil daftar gagal kirim: {error}")
+
+        response_data = response.get('response', {})
+        failed_delivery_list = response_data.get('failed_delivery_list', [])
+        
+        if not failed_delivery_list:
+            app.logger.info(f"No more failed deliveries, breaking at page {page_no}.")
+            break
+        
+        all_failed_deliveries.extend(failed_delivery_list)
+        
+        if not response_data.get('more', False):
+             app.logger.info(f"API indicates no more failed deliveries. Breaking at page {page_no}.")
+             break
+
+        page_no += 1
+        if page_no > 100:
+            app.logger.warning("Reached safety limit of 100 pages for failed deliveries.")
+            break
+    
+    app.logger.info(f"Fetched {len(all_failed_deliveries)} total raw failed deliveries.")
+    return all_failed_deliveries
 
 def process_returns_with_manual_filter_global(export_id, access_token):
     """
-    Get ALL returns, filter manually, then use BATCH processing to get details.
-    This version has strict date validation and correct multi-SKU handling.
+    Get ALL returns and failed deliveries, filter manually, then use BATCH processing to get details.
     """
-    app.logger.info("=== STARTING process_returns_with_manual_filter_global (v3 - Strict & Expanded) ===")
+    app.logger.info("=== STARTING process_returns_with_manual_filter_global (v4 - Combined) ===")
     
     if export_id not in export_progress_store:
         return
@@ -1607,123 +1653,86 @@ def process_returns_with_manual_filter_global(export_id, access_token):
         export_data['current_step'] = step
         app.logger.info(f"Progress {export_data['progress']}%: {export_data['current_step']}")
 
-    # Step 1: Strict Date Validation
+    # Step 1: Date Validation
     update_progress(1.0, 'Memvalidasi rentang tanggal...')
-    if not export_data.get('date_from') or not export_data.get('date_to'):
-        error_msg = 'Error: Rentang tanggal wajib diisi. Proses dibatalkan.'
-        update_progress(100.0, error_msg)
-        export_data['status'] = 'error'
-        export_data['error'] = error_msg
-        return
-
     try:
         date_from = datetime.strptime(export_data['date_from'], '%Y-%m-%d').replace(hour=0, minute=0, second=0)
         date_to = datetime.strptime(export_data['date_to'], '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-        app.logger.info(f"Date filter validated. Range: {date_from} to {date_to}")
-    except (ValueError, TypeError):
-        error_msg = 'Error: Format tanggal tidak valid. Gunakan YYYY-MM-DD. Proses dibatalkan.'
+    except (ValueError, TypeError, KeyError):
+        error_msg = 'Error: Rentang tanggal wajib diisi dengan format YYYY-MM-DD.'
         update_progress(100.0, error_msg)
         export_data['status'] = 'error'
         export_data['error'] = error_msg
         return
 
-    # Step 2: Fetch all raw return data
+    # Step 2: Fetch all raw data (Returns)
     update_progress(5.0, 'Mengambil SEMUA data retur dari API...')
     shop_id = export_data['shop_id']
     all_raw_returns = []
     page_no = 1
-    
-    app.logger.info(f"🔍 DEBUG: Starting raw returns fetch for shop {shop_id}")
-    
     while True:
-        update_progress(10, f'Mengambil halaman {page_no} (semua data retur)...')
-        
-        return_body = {"page_no": page_no, "page_size": 100}  # Optimized: max API limit
-        app.logger.info(f"🔍 DEBUG: Fetching page {page_no} with body: {return_body}")
-        
+        update_progress(10 + page_no, f'Mengambil halaman {page_no} (semua data retur)...')
         response, error = call_shopee_api("/api/v2/returns/get_return_list", method='GET', 
-                                        shop_id=shop_id, access_token=access_token, body=return_body, export_id=export_id)
-            
+                                        shop_id=shop_id, access_token=access_token, body={"page_no": page_no, "page_size": 100}, export_id=export_id)
         if error:
-            app.logger.error(f"🔍 DEBUG: API Error on page {page_no}: {error}")
             export_data['error'] = f"Gagal mengambil daftar retur: {error}"
             export_data['status'] = 'error'
             return
-                
         return_list = response.get('response', {}).get('return', [])
-        app.logger.info(f"🔍 DEBUG: Page {page_no} returned {len(return_list)} items")
-        
-        if not return_list:
-            app.logger.info(f"🔍 DEBUG: No more data, breaking at page {page_no}")
-            break
-                
+        if not return_list: break
         all_raw_returns.extend(return_list)
         page_no += 1
-        # Removed time.sleep(0.3) - API self-throttles at ~5s per request
-    
-    app.logger.info(f"Fetched {len(all_raw_returns)} total raw returns from API.")
-    update_progress(60.0, f'Menyaring {len(all_raw_returns)} data berdasarkan tanggal...')
-    
-    # CRITICAL DEBUG: Check if we reach this point
-    app.logger.info(f"🔍 DEBUG CHECKPOINT: About to start date filtering with {len(all_raw_returns)} items")
+        if page_no > 200: break # Safety break
+    update_progress(30.0, f'Selesai mengambil {len(all_raw_returns)} data retur.')
 
-    # Step 3: Manual date filtering with detailed debugging
-    app.logger.info(f"=== DATE FILTERING DEBUG ===")
-    app.logger.info(f"Target date range: {date_from} to {date_to}")
-    app.logger.info(f"Total raw returns to filter: {len(all_raw_returns)}")
-    
-    filtered_returns = []
-    sample_dates = []
-    
-    for i, item in enumerate(all_raw_returns):
+    # Step 3: Fetch all raw data (Failed Deliveries)
+    try:
+        all_raw_failed_deliveries = fetch_all_failed_deliveries(shop_id, access_token, export_id, update_progress)
+    except Exception as e:
+        export_data['error'] = str(e)
+        export_data['status'] = 'error'
+        update_progress(100, f"Error: {e}")
+        return
+
+    # Step 4: Combine, add type, and filter
+    update_progress(50.0, f'Menyaring {len(all_raw_returns)} retur dan {len(all_raw_failed_deliveries)} gagal kirim...')
+    combined_raw_data = []
+    for item in all_raw_returns:
+        item['type'] = 'return'
+        combined_raw_data.append(item)
+    for item in all_raw_failed_deliveries:
+        item['type'] = 'failed_delivery'
+        item['create_time'] = item.get('rts_time')
+        combined_raw_data.append(item)
+
+    filtered_data = []
+    for item in combined_raw_data:
         if item.get('create_time'):
             item_date = datetime.fromtimestamp(item['create_time'])
-            in_range = date_from <= item_date <= date_to
-            
-            # Collect sample dates for debugging
-            if i < 5:  # First 5 items
-                sample_dates.append(f"Item {i+1}: {item_date} (in_range: {in_range})")
-            
-            if in_range:
-                filtered_returns.append(item)
-        else:
-            if i < 5:
-                sample_dates.append(f"Item {i+1}: NO create_time field")
+            if date_from <= item_date <= date_to:
+                filtered_data.append(item)
     
-    # Log sample dates for debugging
-    for sample in sample_dates:
-        app.logger.info(f"Sample: {sample}")
-    
-    app.logger.info(f"After date filtering: {len(filtered_returns)} returns match criteria (from {len(all_raw_returns)} total)")
-    
-    if not filtered_returns:
-        update_progress(100.0, 'Selesai! Tidak ada data retur dalam rentang tanggal yang dipilih.')
+    app.logger.info(f"After filtering: {len(filtered_data)} records match criteria.")
+    if not filtered_data:
+        update_progress(100.0, 'Selesai! Tidak ada data yang cocok dalam rentang tanggal yang dipilih.')
         export_data['status'] = 'completed'
         export_data['data'] = []
         return
 
-    update_progress(75.0, f'Mempersiapkan pengambilan detail untuk {len(filtered_returns)} retur...')
-
-    # Step 4: BATCH fetch all required details
-    order_sns_to_fetch = list(set([r['order_sn'] for r in filtered_returns if 'order_sn' in r]))
+    # Step 5: BATCH fetch all required details
+    update_progress(70.0, f'Mempersiapkan pengambilan detail untuk {len(filtered_data)} data...')
+    order_sns_to_fetch = list(set([d['order_sn'] for d in filtered_data if 'order_sn' in d]))
     
-    def progress_callback_for_batch(progress, step):
-        update_progress(progress, step)
-
     order_details_map, tracking_numbers_map = get_batch_order_and_tracking_details(
-        shop_id, access_token, order_sns_to_fetch, progress_callback_for_batch, export_id
+        shop_id, access_token, order_sns_to_fetch, 
+        lambda p, s: update_progress(70 + (p/100*20), s), # Scale batch progress to 70-90% range
+        export_id
     )
 
-    # Step 5: Combine all data types and format for Excel
-    update_progress(90.0, 'Menggabungkan data dan menyusun untuk Excel...')
-    
-    combined_data_for_processing = []
-    for ret in filtered_returns:
-        ret['type'] = 'return'
-        combined_data_for_processing.append(ret)
-
+    # Step 6: Format for Excel
+    update_progress(95.0, 'Menggabungkan data dan menyusun untuk Excel...')
     processed_data = format_combined_data_for_excel(
-        combined_data_for_processing, 
+        filtered_data, 
         order_details_map, 
         tracking_numbers_map
     )
@@ -1731,8 +1740,7 @@ def process_returns_with_manual_filter_global(export_id, access_token):
     export_data['data'] = processed_data
     export_data['status'] = 'completed'
     update_progress(100.0, f'Selesai! {len(processed_data)} baris data berhasil diproses.')
-    
-    app.logger.info(f"Export completed with {len(processed_data)} rows (Strict Dates & Expanded SKUs).")
+    app.logger.info(f"Export completed with {len(processed_data)} rows (Combined).")
 
 
 
